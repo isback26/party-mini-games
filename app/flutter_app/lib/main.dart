@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'services/socket_service.dart';
 
 void main() {
   runApp(const PartyMiniGamesApp());
@@ -20,10 +21,67 @@ class PartyMiniGamesApp extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
   final List<String> games = const ['369 게임', '눈치게임', '번데기 게임'];
+  final TextEditingController nicknameController = TextEditingController();
+  final SocketService socketService = SocketService();
+
+  String connectionText = '서버 연결 전';
+
+  @override
+  void initState() {
+    super.initState();
+
+    socketService.connect(
+      onConnected: () {
+        if (!mounted) return;
+        setState(() {
+          connectionText = '서버 연결됨';
+        });
+      },
+      onDisconnected: () {
+        if (!mounted) return;
+        setState(() {
+          connectionText = '서버 연결 안 됨';
+        });
+      },
+      onConnectError: (_) {
+        if (!mounted) return;
+        setState(() {
+          connectionText = '서버 연결 실패';
+        });
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    nicknameController.dispose();
+    socketService.disconnect();
+    super.dispose();
+  }
+
+  void onLobbyEnterPressed() {
+    final nickname = nicknameController.text.trim();
+
+    if (nickname.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('닉네임을 입력해주세요.')));
+      return;
+    }
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('닉네임 "$nickname" 확인 완료')));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,8 +97,18 @@ class HomeScreen extends StatelessWidget {
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
+            const SizedBox(height: 12),
+            Text(
+              connectionText,
+              style: TextStyle(
+                fontSize: 14,
+                color: socketService.isConnected ? Colors.green : Colors.red,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 30),
             TextField(
+              controller: nicknameController,
               decoration: InputDecoration(
                 labelText: '닉네임 입력',
                 border: OutlineInputBorder(
@@ -80,7 +148,7 @@ class HomeScreen extends StatelessWidget {
               width: double.infinity,
               height: 52,
               child: ElevatedButton(
-                onPressed: () {},
+                onPressed: onLobbyEnterPressed,
                 child: const Text('로비 입장'),
               ),
             ),
