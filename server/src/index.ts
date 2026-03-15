@@ -1,4 +1,6 @@
 import express from "express";
+import { createGameEngine } from "./games/createGameEngine";
+import { GameType } from "./games/types";
 import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -28,9 +30,12 @@ type Player = {
 type Room = {
   code: string;
   hostSocketId: string;
+  selectedGame: GameType;
   players: Player[];
   status: "waiting" | "playing";
 };
+
+const allowedGameTypes: GameType[] = ["three_six_nine", "nunchi", "beondegi"];
 
 const rooms = new Map<string, Room>();
 
@@ -63,6 +68,7 @@ io.on("connection", (socket) => {
       const room: Room = {
         code,
         hostSocketId: socket.id,
+        selectedGame: "three_six_nine",
         status: "waiting",
         players: [
           {
@@ -140,6 +146,107 @@ io.on("connection", (socket) => {
     }
   );
 
+  socket.on(
+    "room:select_game",
+    (
+      payload: { roomCode: string; gameType: GameType },
+      callback: (response: Record<string, unknown>) => void
+    ) => {
+      try {
+        const roomCode = payload?.roomCode?.trim().toUpperCase();
+        const gameType = payload?.gameType;
+
+        if (!roomCode) {
+          callback({ ok: false, message: "방 코드가 필요합니다." });
+          return;
+        }
+
+        const room = rooms.get(roomCode);
+
+        if (!room) {
+          callback({ ok: false, message: "존재하지 않는 방입니다." });
+          return;
+        }
+
+        if (room.hostSocketId !== socket.id) {
+          callback({ ok: false, message: "방장만 게임을 선택할 수 있습니다." });
+          return;
+        }
+
+        if (!allowedGameTypes.includes(gameType)) {
+          callback({ ok: false, message: "지원하지 않는 게임입니다." });
+          return;
+        }
+
+        room.selectedGame = gameType;
+
+        callback({
+          ok: true,
+          selectedGame: room.selectedGame,
+          room,
+        });
+
+        io.to(roomCode).emit("room:update", room);
+      } catch (error) {
+        callback({ ok: false, message: "게임 선택 중 오류가 발생했습니다." });
+      }
+    }
+  );
+
+  socket.on(
+    "game:start",
+    (
+      payload: { roomCode: string },
+      callback: (response: Record<string, unknown>) => void
+    ) => {
+      try {
+        const roomCode = payload?.roomCode?.trim().toUpperCase();
+
+        if (!roomCode) {
+          callback({ ok: false, message: "방 코드가 필요합니다." });
+          return;
+        }
+
+        const room = rooms.get(roomCode);
+
+        if (!room) {
+          callback({ ok: false, message: "존재하지 않는 방입니다." });
+          return;
+        }
+
+        if (room.hostSocketId !== socket.id) {
+          callback({ ok: false, message: "방장만 게임을 시작할 수 있습니다." });
+          return;
+        }
+
+        if (room.players.length < 2) {
+          callback({ ok: false, message: "최소 2명 이상 있어야 시작할 수 있습니다." });
+          return;
+        }
+
+        const engine = createGameEngine(room.selectedGame);
+        const gameState = engine.createInitialState(room);
+
+        room.status = "playing";
+
+        callback({
+          ok: true,
+          gameType: room.selectedGame,
+          gameState,
+        });
+
+        io.to(roomCode).emit("room:update", room);
+        io.to(roomCode).emit("game:started", {
+          roomCode: room.code,
+          gameType: room.selectedGame,
+          gameState,
+        });
+      } catch (error) {
+        callback({ ok: false, message: "게임 시작 중 오류가 발생했습니다." });
+      }
+    }
+  );
+
   socket.on("disconnect", () => {
     console.log(`User disconnected: ${socket.id}`);
 
@@ -154,6 +261,9 @@ io.on("connection", (socket) => {
         } else {
           if (room.hostSocketId === socket.id) {
             room.hostSocketId = room.players[0].socketId;
+          }
+          if (room.status === "playing" && room.players.length < 2) {
+            room.status = "waiting";
           }
           io.to(roomCode).emit("room:update", room);
         }

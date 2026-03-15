@@ -64,7 +64,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     nicknameController.dispose();
-    socketService.disconnect();
     super.dispose();
   }
 
@@ -78,9 +77,13 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    ScaffoldMessenger.of(
+    Navigator.push(
       context,
-    ).showSnackBar(SnackBar(content: Text('닉네임 "$nickname" 확인 완료')));
+      MaterialPageRoute(
+        builder: (_) =>
+            LobbyScreen(nickname: nickname, socketService: socketService),
+      ),
+    );
   }
 
   @override
@@ -151,6 +154,454 @@ class _HomeScreenState extends State<HomeScreen> {
                 onPressed: onLobbyEnterPressed,
                 child: const Text('로비 입장'),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class LobbyScreen extends StatefulWidget {
+  final String nickname;
+  final SocketService socketService;
+
+  const LobbyScreen({
+    super.key,
+    required this.nickname,
+    required this.socketService,
+  });
+
+  @override
+  State<LobbyScreen> createState() => _LobbyScreenState();
+}
+
+class _LobbyScreenState extends State<LobbyScreen> {
+  final TextEditingController roomCodeController = TextEditingController();
+
+  static const Map<String, String> gameLabels = {
+    'three_six_nine': '369 게임',
+    'nunchi': '눈치게임',
+    'beondegi': '번데기 게임',
+  };
+
+  String? currentRoomCode;
+  List<dynamic> players = [];
+  String? hostSocketId;
+  String selectedGame = 'three_six_nine';
+  String roomStatus = 'waiting';
+  bool isLoading = false;
+  String statusMessage = '로비에 입장했습니다.';
+  String? startedGameLabel;
+
+  @override
+  void initState() {
+    super.initState();
+
+    widget.socketService.off('room:update');
+    widget.socketService.off('game:started');
+    widget.socketService.on('room:update', _handleRoomUpdate);
+    widget.socketService.on('game:started', _handleGameStarted);
+  }
+
+  @override
+  void dispose() {
+    widget.socketService.off('room:update');
+    widget.socketService.off('game:started');
+    roomCodeController.dispose();
+    super.dispose();
+  }
+
+  void _handleRoomUpdate(dynamic data) {
+    if (!mounted) return;
+
+    final roomCode = data['code']?.toString();
+    final nextPlayers = (data['players'] as List?) ?? [];
+    final nextHostSocketId = data['hostSocketId']?.toString();
+    final nextSelectedGame = data['selectedGame']?.toString() ?? selectedGame;
+    final nextRoomStatus = data['status']?.toString() ?? 'waiting';
+
+    setState(() {
+      currentRoomCode = roomCode;
+      players = nextPlayers;
+      hostSocketId = nextHostSocketId;
+      selectedGame = nextSelectedGame;
+      roomStatus = nextRoomStatus;
+      isLoading = false;
+      statusMessage = '대기방 정보가 업데이트되었습니다.';
+    });
+  }
+
+  void _handleGameStarted(dynamic data) {
+    if (!mounted) return;
+
+    final gameType = data['gameType']?.toString() ?? selectedGame;
+
+    setState(() {
+      startedGameLabel = gameLabels[gameType] ?? gameType;
+      roomStatus = 'playing';
+      statusMessage = '${startedGameLabel ?? "게임"} 시작됨';
+    });
+  }
+
+  Future<void> _createRoom() async {
+    if (isLoading) return;
+
+    setState(() {
+      isLoading = true;
+      statusMessage = '방을 만드는 중...';
+    });
+
+    widget.socketService.emitWithAck(
+      'room:create',
+      {'nickname': widget.nickname},
+      (response) {
+        if (!mounted) return;
+
+        final ok = response != null && response['ok'] == true;
+
+        if (!ok) {
+          setState(() {
+            isLoading = false;
+            statusMessage =
+                response?['message']?.toString() ?? '방 만들기에 실패했습니다.';
+          });
+          return;
+        }
+
+        setState(() {
+          final room = response['room'] as Map<String, dynamic>?;
+          currentRoomCode =
+              room?['code']?.toString() ?? response['roomCode']?.toString();
+          players = (room?['players'] as List?) ?? [];
+          hostSocketId = room?['hostSocketId']?.toString();
+          selectedGame = room?['selectedGame']?.toString() ?? selectedGame;
+          isLoading = false;
+          statusMessage = '방이 생성되었습니다.';
+        });
+      },
+    );
+  }
+
+  Future<void> _joinRoom() async {
+    if (isLoading) return;
+
+    final roomCode = roomCodeController.text.trim().toUpperCase();
+
+    if (roomCode.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('참가할 방 코드를 입력해주세요.')));
+      return;
+    }
+
+    setState(() {
+      isLoading = true;
+      statusMessage = '방에 참가하는 중...';
+    });
+
+    widget.socketService.emitWithAck(
+      'room:join',
+      {'roomCode': roomCode, 'nickname': widget.nickname},
+      (response) {
+        if (!mounted) return;
+
+        final ok = response != null && response['ok'] == true;
+
+        if (!ok) {
+          setState(() {
+            isLoading = false;
+            statusMessage = response?['message']?.toString() ?? '방 참가에 실패했습니다.';
+          });
+          return;
+        }
+
+        setState(() {
+          final room = response['room'] as Map<String, dynamic>?;
+          currentRoomCode = room?['code']?.toString() ?? roomCode;
+          hostSocketId = room?['hostSocketId']?.toString();
+          selectedGame = room?['selectedGame']?.toString() ?? selectedGame;
+          players = (room?['players'] as List?) ?? [];
+          isLoading = false;
+          statusMessage = '방에 참가했습니다.';
+        });
+      },
+    );
+  }
+
+  Future<void> _selectGame(String gameType) async {
+    if (currentRoomCode == null || isLoading) return;
+
+    setState(() {
+      isLoading = true;
+      statusMessage = '게임을 선택하는 중...';
+    });
+
+    widget.socketService.emitWithAck(
+      'room:select_game',
+      {'roomCode': currentRoomCode, 'gameType': gameType},
+      (response) {
+        if (!mounted) return;
+
+        final ok = response != null && response['ok'] == true;
+
+        if (!ok) {
+          setState(() {
+            isLoading = false;
+            statusMessage =
+                response?['message']?.toString() ?? '게임 선택에 실패했습니다.';
+          });
+          return;
+        }
+
+        setState(() {
+          selectedGame = response['selectedGame']?.toString() ?? gameType;
+          isLoading = false;
+          statusMessage = '게임이 선택되었습니다.';
+        });
+      },
+    );
+  }
+
+  Future<void> _startGame() async {
+    if (currentRoomCode == null || isLoading) return;
+
+    setState(() {
+      isLoading = true;
+      statusMessage = '게임을 시작하는 중...';
+    });
+
+    widget.socketService.emitWithAck(
+      'game:start',
+      {'roomCode': currentRoomCode},
+      (response) {
+        if (!mounted) return;
+
+        final ok = response != null && response['ok'] == true;
+
+        if (!ok) {
+          setState(() {
+            isLoading = false;
+            statusMessage =
+                response?['message']?.toString() ?? '게임 시작에 실패했습니다.';
+          });
+          return;
+        }
+
+        setState(() {
+          isLoading = false;
+          roomStatus = 'playing';
+          startedGameLabel =
+              gameLabels[response['gameType']?.toString() ?? selectedGame] ??
+              selectedGame;
+          statusMessage = '${startedGameLabel ?? "게임"} 시작됨';
+        });
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final inRoom = currentRoomCode != null && currentRoomCode!.isNotEmpty;
+    final mySocketId = widget.socketService.socket?.id;
+    final isHost = mySocketId != null && hostSocketId == mySocketId;
+    final currentGameLabel = gameLabels[selectedGame] ?? selectedGame;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('게임 로비'), centerTitle: true),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '닉네임: ${widget.nickname}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(statusMessage, style: const TextStyle(fontSize: 14)),
+                    const SizedBox(height: 8),
+                    Text(
+                      '내 역할: ${isHost ? "방장" : "참가자"}',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (!inRoom) ...[
+              SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: isLoading ? null : _createRoom,
+                  child: const Text('방 만들기'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: roomCodeController,
+                textCapitalization: TextCapitalization.characters,
+                decoration: InputDecoration(
+                  labelText: '방 코드 입력',
+                  hintText: '예: ABC123',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: isLoading ? null : _joinRoom,
+                  child: const Text('방 참가하기'),
+                ),
+              ),
+            ] else ...[
+              Card(
+                color: Colors.blue.shade50,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        '대기방',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '방 코드: $currentRoomCode',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        '참가자 목록',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '선택된 게임: $currentGameLabel',
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      if (players.isEmpty)
+                        const Text('아직 참가자가 없습니다.')
+                      else
+                        ...players.map((player) {
+                          final nickname =
+                              player['nickname']?.toString() ?? '이름 없음';
+                          final playerIsHost =
+                              player['socketId']?.toString() == hostSocketId;
+
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.person),
+                            title: Text(nickname),
+                            subtitle: Text(playerIsHost ? '방장' : '참가자'),
+                          );
+                        }),
+                      const SizedBox(height: 16),
+                      const Text(
+                        '게임 선택',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: gameLabels.entries.map((entry) {
+                          final isSelected = selectedGame == entry.key;
+                          return ChoiceChip(
+                            label: Text(entry.value),
+                            selected: isSelected,
+                            onSelected: (!isHost || roomStatus == 'playing')
+                                ? null
+                                : (_) => _selectGame(entry.key),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton(
+                          onPressed:
+                              (!isHost ||
+                                  roomStatus == 'playing' ||
+                                  players.length < 2)
+                              ? null
+                              : _startGame,
+                          child: Text(
+                            roomStatus == 'playing' ? '게임 진행 중' : '게임 시작',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        players.length < 2
+                            ? '게임 시작은 최소 2명부터 가능합니다.'
+                            : isHost
+                            ? '방장이 게임을 선택하고 시작할 수 있습니다.'
+                            : '방장이 게임을 시작할 때까지 기다려주세요.',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      if (startedGameLabel != null) ...[
+                        const SizedBox(height: 16),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '현재 진행 상태: ${startedGameLabel!} 시작됨',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            if (isLoading) const Center(child: CircularProgressIndicator()),
+            const Spacer(),
+            OutlinedButton(
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              child: const Text('뒤로 가기'),
             ),
           ],
         ),

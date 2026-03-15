@@ -1,3 +1,4 @@
+import 'dart:developer';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 class SocketService {
@@ -22,22 +23,22 @@ class SocketService {
     );
 
     _socket!.onConnect((_) {
-      print('✅ Socket connected: ${_socket!.id}');
+      log('✅ Socket connected: ${_socket!.id}');
       onConnected?.call();
     });
 
     _socket!.onDisconnect((_) {
-      print('❌ Socket disconnected');
+      log('❌ Socket disconnected');
       onDisconnected?.call();
     });
 
     _socket!.onConnectError((data) {
-      print('⚠️ Connect error: $data');
+      log('⚠️ Connect error: $data');
       onConnectError?.call(data);
     });
 
     _socket!.onError((data) {
-      print('⚠️ Socket error: $data');
+      log('⚠️ Socket error: $data');
     });
 
     _socket!.connect();
@@ -67,5 +68,9 @@ class SocketService {
     Function(dynamic response) callback,
   ) {
     _socket?.emitWithAck(event, data, ack: callback);
+  }
+
+  void dispose() {
+    disconnect();
   }
 }
