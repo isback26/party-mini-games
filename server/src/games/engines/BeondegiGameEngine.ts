@@ -1,4 +1,10 @@
-import { GameEngine, GameRoom, GameState } from "../types";
+import {
+  GameEngine,
+  GameRoom,
+  GameState,
+  GameSubmitPayload,
+  GameSubmitResult,
+} from "../types";
 
 export class BeondegiGameEngine implements GameEngine {
   readonly gameType = "beondegi" as const;
@@ -17,6 +23,19 @@ export class BeondegiGameEngine implements GameEngine {
           nickname: player.nickname,
         })),
       },
+    };
+  }
+
+  submitTurn(
+    _room: GameRoom,
+    gameState: GameState,
+    _payload: GameSubmitPayload
+  ): GameSubmitResult {
+    return {
+      gameState,
+      isCorrect: false,
+      isFinished: false,
+      message: "번데기게임 엔진은 아직 구현 전입니다.",
     };
   }
 }

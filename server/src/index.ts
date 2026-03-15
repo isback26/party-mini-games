@@ -1,6 +1,6 @@
 import express from "express";
 import { createGameEngine } from "./games/createGameEngine";
-import { GameType } from "./games/types";
+import { GameState, GameRoom, GameType } from "./games/types";
 import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -22,28 +22,18 @@ app.get("/", (req, res) => {
   res.send("Party Mini Games Server is running.");
 });
 
-type Player = {
-  socketId: string;
-  nickname: string;
-};
-
-type Room = {
-  code: string;
-  hostSocketId: string;
-  selectedGame: GameType;
-  players: Player[];
-  status: "waiting" | "playing";
-};
-
 const allowedGameTypes: GameType[] = ["three_six_nine", "nunchi", "beondegi"];
 
-const rooms = new Map<string, Room>();
-const roomGameStates = new Map<string, any>();
+const rooms = new Map<string, GameRoom>();
+const roomGameStates = new Map<string, GameState>();
 
-type ThreeSixNineSubmitPayload = {
+type GameSubmitEventPayload = {
   roomCode: string;
-  moveType: "number" | "clap";
+  moveType: string;
   value?: number;
+  text?: string;
+  inputMode?: "touch" | "voice";
+  recognizedText?: string;
 };
 
 function generateRoomCode(): string {
@@ -53,43 +43,6 @@ function generateRoomCode(): string {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
-}
-
-function getNextPlayerSocketId(room: Room, currentSocketId: string | null): string | null {
-  if (!currentSocketId || room.players.length === 0) {
-    return room.players[0]?.socketId ?? null;
-  }
-
-  const currentIndex = room.players.findIndex(
-    (player) => player.socketId === currentSocketId
-  );
-
-  if (currentIndex === -1) {
-    return room.players[0]?.socketId ?? null;
-  }
-
-  const nextIndex = (currentIndex + 1) % room.players.length;
-  return room.players[nextIndex]?.socketId ?? null;
-}
-
-function countClaps(num: number): number {
-  return num
-    .toString()
-    .split("")
-    .filter((digit) => digit === "3" || digit === "6" || digit === "9").length;
-}
-
-function getExpectedMove(num: number): { moveType: "number" | "clap"; displayText: string } {
-  const clapCount = countClaps(num);
-
-  if (clapCount > 0) {
-    return {
-      moveType: "clap",
-      displayText: "👏".repeat(clapCount),
-    };
-  }
-
-  return { moveType: "number", displayText: String(num) };
 }
 
 io.on("connection", (socket) => {
@@ -109,7 +62,7 @@ io.on("connection", (socket) => {
         code = generateRoomCode();
       }
 
-      const room: Room = {
+      const room: GameRoom = {
         code,
         hostSocketId: socket.id,
         selectedGame: "three_six_nine",
@@ -270,16 +223,6 @@ io.on("connection", (socket) => {
 
         const engine = createGameEngine(room.selectedGame);
         const gameState = engine.createInitialState(room);
-        const initialExpectedNumber = Number(gameState?.metadata?.expectedNumber ?? 1);
-        const expectedMove = getExpectedMove(initialExpectedNumber);
-
-        gameState.metadata = {
-          ...(gameState.metadata ?? {}),
-          expectedNumber: initialExpectedNumber,
-          expectedMoveType: expectedMove.moveType,
-          expectedDisplayText: expectedMove.displayText,
-          lastActionMessage: "게임이 시작되었습니다.",
-        };
 
         room.status = "playing";
         roomGameStates.set(roomCode, gameState);
@@ -306,16 +249,24 @@ io.on("connection", (socket) => {
   socket.on(
     "game:submit",
     (
-      payload: ThreeSixNineSubmitPayload,
+      payload: GameSubmitEventPayload,
       callback: (response: Record<string, unknown>) => void
     ) => {
       try {
         const roomCode = payload?.roomCode?.trim().toUpperCase();
         const moveType = payload?.moveType;
         const value = payload?.value;
+        const text = payload?.text;
+        const inputMode = payload?.inputMode;
+        const recognizedText = payload?.recognizedText;
 
         if (!roomCode) {
           callback({ ok: false, message: "방 코드가 필요합니다." });
+          return;
+        }
+
+        if (!moveType || typeof moveType !== "string") {
+          callback({ ok: false, message: "moveType이 필요합니다." });
           return;
         }
 
@@ -348,74 +299,45 @@ io.on("connection", (socket) => {
           return;
         }
 
-        const expectedNumber = Number(gameState?.metadata?.expectedNumber ?? 1);
-        const expectedMove = getExpectedMove(expectedNumber);
-        const currentPlayer =
-          room.players.find((player) => player.socketId === socket.id)?.nickname ?? "알 수 없음";
+        const engine = createGameEngine(room.selectedGame);
+        const submitResult = engine.submitTurn(room, gameState, {
+          playerSocketId: socket.id,
+          moveType,
+          value,
+          text,
+          inputMode,
+          recognizedText,
+        });
 
-        const isCorrect =
-          expectedMove.moveType === "clap"
-            ? moveType === "clap"
-            : moveType === "number" && Number(value) === expectedNumber;
+        roomGameStates.set(roomCode, submitResult.gameState);
 
-        if (!isCorrect) {
+        if (submitResult.isFinished) {
           room.status = "waiting";
-          gameState.phase = "finished";
-          gameState.metadata = {
-            ...(gameState.metadata ?? {}),
-            expectedNumber,
-            expectedMoveType: expectedMove.moveType,
-            expectedDisplayText: expectedMove.displayText,
-            lastActionMessage: `${currentPlayer} 님이 틀렸습니다.`,
-            loserSocketId: socket.id,
-            loserNickname: currentPlayer,
-          };
-
-          roomGameStates.set(roomCode, gameState);
 
           callback({
             ok: true,
             correct: false,
-            gameState,
+            gameState: submitResult.gameState,
           });
 
           io.to(roomCode).emit("room:update", room);
-          io.to(roomCode).emit("game:state", gameState);
+          io.to(roomCode).emit("game:state", submitResult.gameState);
           io.to(roomCode).emit("game:over", {
             roomCode,
             gameType: room.selectedGame,
-            gameState,
-            message: `${currentPlayer} 님이 틀렸습니다. 게임 종료!`,
+            gameState: submitResult.gameState,
+            message: submitResult.message,
           });
           return;
         }
 
-        const nextExpectedNumber = expectedNumber + 1;
-        const nextExpectedMove = getExpectedMove(nextExpectedNumber);
-        const nextTurnSocketId = getNextPlayerSocketId(room, socket.id);
-
-        gameState.round = Number(gameState.round ?? 1) + 1;
-        gameState.currentTurnSocketId = nextTurnSocketId;
-        gameState.metadata = {
-          ...(gameState.metadata ?? {}),
-          expectedNumber: nextExpectedNumber,
-          expectedMoveType: nextExpectedMove.moveType,
-          expectedDisplayText: nextExpectedMove.displayText,
-          lastActionMessage:
-            expectedMove.moveType === "clap"
-              ? `${currentPlayer} 님이 ${expectedMove.displayText} 입력 성공`
-              : `${currentPlayer} 님이 ${expectedNumber} 입력 성공`,
-        };
-
-        roomGameStates.set(roomCode, gameState);
-
         callback({
           ok: true,
           correct: true,
-          gameState,
+          gameState: submitResult.gameState,
         });
 
-        io.to(roomCode).emit("game:state", gameState);
+        io.to(roomCode).emit("game:state", submitResult.gameState);
       } catch (error) {
         callback({ ok: false, message: "입력 처리 중 오류가 발생했습니다." });
       }
