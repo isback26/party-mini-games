@@ -17,5 +17,5 @@ dist/
 .pub/
 build/
 
-# Misc
+# Logs
 *.log
