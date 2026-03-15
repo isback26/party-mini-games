@@ -38,6 +38,13 @@ type Room = {
 const allowedGameTypes: GameType[] = ["three_six_nine", "nunchi", "beondegi"];
 
 const rooms = new Map<string, Room>();
+const roomGameStates = new Map<string, any>();
+
+type ThreeSixNineSubmitPayload = {
+  roomCode: string;
+  moveType: "number" | "clap";
+  value?: number;
+};
 
 function generateRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -46,6 +53,43 @@ function generateRoomCode(): string {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
+}
+
+function getNextPlayerSocketId(room: Room, currentSocketId: string | null): string | null {
+  if (!currentSocketId || room.players.length === 0) {
+    return room.players[0]?.socketId ?? null;
+  }
+
+  const currentIndex = room.players.findIndex(
+    (player) => player.socketId === currentSocketId
+  );
+
+  if (currentIndex === -1) {
+    return room.players[0]?.socketId ?? null;
+  }
+
+  const nextIndex = (currentIndex + 1) % room.players.length;
+  return room.players[nextIndex]?.socketId ?? null;
+}
+
+function countClaps(num: number): number {
+  return num
+    .toString()
+    .split("")
+    .filter((digit) => digit === "3" || digit === "6" || digit === "9").length;
+}
+
+function getExpectedMove(num: number): { moveType: "number" | "clap"; displayText: string } {
+  const clapCount = countClaps(num);
+
+  if (clapCount > 0) {
+    return {
+      moveType: "clap",
+      displayText: "👏".repeat(clapCount),
+    };
+  }
+
+  return { moveType: "number", displayText: String(num) };
 }
 
 io.on("connection", (socket) => {
@@ -226,8 +270,19 @@ io.on("connection", (socket) => {
 
         const engine = createGameEngine(room.selectedGame);
         const gameState = engine.createInitialState(room);
+        const initialExpectedNumber = Number(gameState?.metadata?.expectedNumber ?? 1);
+        const expectedMove = getExpectedMove(initialExpectedNumber);
+
+        gameState.metadata = {
+          ...(gameState.metadata ?? {}),
+          expectedNumber: initialExpectedNumber,
+          expectedMoveType: expectedMove.moveType,
+          expectedDisplayText: expectedMove.displayText,
+          lastActionMessage: "게임이 시작되었습니다.",
+        };
 
         room.status = "playing";
+        roomGameStates.set(roomCode, gameState);
 
         callback({
           ok: true,
@@ -236,6 +291,7 @@ io.on("connection", (socket) => {
         });
 
         io.to(roomCode).emit("room:update", room);
+        io.to(roomCode).emit("game:state", gameState);
         io.to(roomCode).emit("game:started", {
           roomCode: room.code,
           gameType: room.selectedGame,
@@ -243,6 +299,125 @@ io.on("connection", (socket) => {
         });
       } catch (error) {
         callback({ ok: false, message: "게임 시작 중 오류가 발생했습니다." });
+      }
+    }
+  );
+
+  socket.on(
+    "game:submit",
+    (
+      payload: ThreeSixNineSubmitPayload,
+      callback: (response: Record<string, unknown>) => void
+    ) => {
+      try {
+        const roomCode = payload?.roomCode?.trim().toUpperCase();
+        const moveType = payload?.moveType;
+        const value = payload?.value;
+
+        if (!roomCode) {
+          callback({ ok: false, message: "방 코드가 필요합니다." });
+          return;
+        }
+
+        const room = rooms.get(roomCode);
+
+        if (!room) {
+          callback({ ok: false, message: "존재하지 않는 방입니다." });
+          return;
+        }
+
+        if (room.status !== "playing") {
+          callback({ ok: false, message: "현재 진행 중인 게임이 없습니다." });
+          return;
+        }
+
+        if (room.selectedGame !== "three_six_nine") {
+          callback({ ok: false, message: "아직 369 게임만 제출할 수 있습니다." });
+          return;
+        }
+
+        const gameState = roomGameStates.get(roomCode);
+
+        if (!gameState) {
+          callback({ ok: false, message: "게임 상태를 찾을 수 없습니다." });
+          return;
+        }
+
+        if (gameState.currentTurnSocketId !== socket.id) {
+          callback({ ok: false, message: "지금은 당신의 턴이 아닙니다." });
+          return;
+        }
+
+        const expectedNumber = Number(gameState?.metadata?.expectedNumber ?? 1);
+        const expectedMove = getExpectedMove(expectedNumber);
+        const currentPlayer =
+          room.players.find((player) => player.socketId === socket.id)?.nickname ?? "알 수 없음";
+
+        const isCorrect =
+          expectedMove.moveType === "clap"
+            ? moveType === "clap"
+            : moveType === "number" && Number(value) === expectedNumber;
+
+        if (!isCorrect) {
+          room.status = "waiting";
+          gameState.phase = "finished";
+          gameState.metadata = {
+            ...(gameState.metadata ?? {}),
+            expectedNumber,
+            expectedMoveType: expectedMove.moveType,
+            expectedDisplayText: expectedMove.displayText,
+            lastActionMessage: `${currentPlayer} 님이 틀렸습니다.`,
+            loserSocketId: socket.id,
+            loserNickname: currentPlayer,
+          };
+
+          roomGameStates.set(roomCode, gameState);
+
+          callback({
+            ok: true,
+            correct: false,
+            gameState,
+          });
+
+          io.to(roomCode).emit("room:update", room);
+          io.to(roomCode).emit("game:state", gameState);
+          io.to(roomCode).emit("game:over", {
+            roomCode,
+            gameType: room.selectedGame,
+            gameState,
+            message: `${currentPlayer} 님이 틀렸습니다. 게임 종료!`,
+          });
+          return;
+        }
+
+        const nextExpectedNumber = expectedNumber + 1;
+        const nextExpectedMove = getExpectedMove(nextExpectedNumber);
+        const nextTurnSocketId = getNextPlayerSocketId(room, socket.id);
+
+        gameState.round = Number(gameState.round ?? 1) + 1;
+        gameState.currentTurnSocketId = nextTurnSocketId;
+        gameState.metadata = {
+          ...(gameState.metadata ?? {}),
+          expectedNumber: nextExpectedNumber,
+          expectedMoveType: nextExpectedMove.moveType,
+          expectedDisplayText: nextExpectedMove.displayText,
+          lastActionMessage:
+            expectedMove.moveType === "clap"
+              ? `${currentPlayer} 님이 ${expectedMove.displayText} 입력 성공`
+              : `${currentPlayer} 님이 ${expectedNumber} 입력 성공`,
+        };
+
+        roomGameStates.set(roomCode, gameState);
+
+        callback({
+          ok: true,
+          correct: true,
+          gameState,
+        });
+
+        io.to(roomCode).emit("game:state", gameState);
+      } catch (error) {
+        callback({ ok: false, message: "입력 처리 중 오류가 발생했습니다." });
       }
     }
   );
@@ -257,13 +432,20 @@ io.on("connection", (socket) => {
       if (room.players.length !== originalLength) {
         if (room.players.length === 0) {
           rooms.delete(roomCode);
+          roomGameStates.delete(roomCode);
           console.log(`[ROOM REMOVED] ${roomCode}`);
         } else {
           if (room.hostSocketId === socket.id) {
             room.hostSocketId = room.players[0].socketId;
           }
+          const gameState = roomGameStates.get(roomCode);
           if (room.status === "playing" && room.players.length < 2) {
             room.status = "waiting";
+          }
+          if (gameState?.currentTurnSocketId === socket.id) {
+            gameState.currentTurnSocketId = room.players[0]?.socketId ?? null;
+            roomGameStates.set(roomCode, gameState);
+            io.to(roomCode).emit("game:state", gameState);
           }
           io.to(roomCode).emit("room:update", room);
         }
