@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'services/socket_service.dart';
+import 'services/audio_service.dart';
 
 void main() {
   runApp(const PartyMiniGamesApp());
@@ -657,11 +658,25 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   dynamic gameState;
   String statusMessage = '369 게임이 시작되었습니다.';
   bool isSubmitting = false;
+  String? _lastTurnSocketId;
 
   @override
   void initState() {
     super.initState();
     gameState = widget.initialGameState;
+    _lastTurnSocketId = gameState?['currentTurnSocketId']?.toString();
+
+    final mySocketId = widget.socketService.socket?.id;
+    final isMyInitialTurn =
+        mySocketId != null &&
+        _lastTurnSocketId != null &&
+        mySocketId == _lastTurnSocketId;
+
+    if (isMyInitialTurn) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        AudioService.playTurnStart();
+      });
+    }
 
     widget.socketService.off('game:state');
     widget.socketService.off('game:over');
@@ -680,6 +695,21 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   void _handleGameState(dynamic data) {
     if (!mounted) return;
 
+    final mySocketId = widget.socketService.socket?.id;
+    final nextTurnSocketId = data?['currentTurnSocketId']?.toString();
+    final wasMyTurn =
+        mySocketId != null &&
+        _lastTurnSocketId != null &&
+        _lastTurnSocketId == mySocketId;
+    final isMyTurnNow =
+        mySocketId != null &&
+        nextTurnSocketId != null &&
+        nextTurnSocketId == mySocketId;
+
+    if (!wasMyTurn && isMyTurnNow) {
+      AudioService.playTurnStart();
+    }
+
     setState(() {
       gameState = data;
       statusMessage =
@@ -687,10 +717,14 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
           '상태가 업데이트되었습니다.';
       isSubmitting = false;
     });
+
+    _lastTurnSocketId = nextTurnSocketId;
   }
 
   void _handleGameOver(dynamic data) {
     if (!mounted) return;
+
+    AudioService.playGameOver();
 
     setState(() {
       gameState = data?['gameState'];
@@ -730,9 +764,51 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     return '알 수 없음';
   }
 
-  Future<void> _submitNumber() async {
+  Future<void> _submitGameInput({
+    required String moveType,
+    int? value,
+    String? text,
+    String inputMode = 'touch',
+    String? recognizedText,
+    required String failureMessage,
+    VoidCallback? onSuccess,
+  }) async {
     if (isSubmitting) return;
 
+    setState(() {
+      isSubmitting = true;
+    });
+
+    widget.socketService.submitGameInput(
+      roomCode: widget.roomCode,
+      moveType: moveType,
+      value: value,
+      text: text,
+      inputMode: inputMode,
+      recognizedText: recognizedText,
+      callback: (response) {
+        if (!mounted) return;
+
+        final ok = response != null && response['ok'] == true;
+
+        if (!ok) {
+          setState(() {
+            isSubmitting = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response?['message']?.toString() ?? failureMessage),
+            ),
+          );
+          return;
+        }
+
+        onSuccess?.call();
+      },
+    );
+  }
+
+  Future<void> _submitNumber() async {
     final value = int.tryParse(numberController.text.trim());
 
     if (value == null) {
@@ -742,64 +818,24 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       return;
     }
 
-    setState(() {
-      isSubmitting = true;
-    });
-
-    widget.socketService.emitWithAck(
-      'game:submit',
-      {'roomCode': widget.roomCode, 'moveType': 'number', 'value': value},
-      (response) {
-        if (!mounted) return;
-
-        final ok = response != null && response['ok'] == true;
-
-        if (!ok) {
-          setState(() {
-            isSubmitting = false;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                response?['message']?.toString() ?? '숫자 제출에 실패했습니다.',
-              ),
-            ),
-          );
-          return;
-        }
-
+    await _submitGameInput(
+      moveType: 'number',
+      value: value,
+      failureMessage: '숫자 제출에 실패했습니다.',
+      onSuccess: () {
         numberController.clear();
+        AudioService.playThreeSixNineCue(value);
       },
     );
   }
 
   Future<void> _submitClap() async {
-    if (isSubmitting) return;
-
-    setState(() {
-      isSubmitting = true;
-    });
-
-    widget.socketService.emitWithAck(
-      'game:submit',
-      {'roomCode': widget.roomCode, 'moveType': 'clap'},
-      (response) {
-        if (!mounted) return;
-
-        final ok = response != null && response['ok'] == true;
-
-        if (!ok) {
-          setState(() {
-            isSubmitting = false;
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                response?['message']?.toString() ?? '박수 제출에 실패했습니다.',
-              ),
-            ),
-          );
-        }
+    await _submitGameInput(
+      moveType: 'clap',
+      text: '👏',
+      failureMessage: '박수 제출에 실패했습니다.',
+      onSuccess: () {
+        AudioService.playClap();
       },
     );
   }
