@@ -657,8 +657,12 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
 
   dynamic gameState;
   String statusMessage = '369 게임이 시작되었습니다.';
+  String feedbackMessage = '게임이 시작되었습니다. 내 차례를 기다려주세요.';
   bool isSubmitting = false;
   String? _lastTurnSocketId;
+  Color _feedbackBackgroundColor = Colors.blue.shade50;
+  Color _feedbackTextColor = Colors.blue.shade900;
+  IconData _feedbackIcon = Icons.info_outline;
 
   @override
   void initState() {
@@ -675,6 +679,23 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     if (isMyInitialTurn) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         AudioService.playTurnStart();
+        if (!mounted) return;
+        setState(() {
+          feedbackMessage = '지금 당신 차례입니다. 입력해주세요.';
+          _feedbackBackgroundColor = Colors.green.shade50;
+          _feedbackTextColor = Colors.green.shade900;
+          _feedbackIcon = Icons.notifications_active_outlined;
+        });
+      });
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          feedbackMessage = '상대방 차례입니다. 화면을 보고 기다려주세요.';
+          _feedbackBackgroundColor = Colors.orange.shade50;
+          _feedbackTextColor = Colors.orange.shade900;
+          _feedbackIcon = Icons.hourglass_bottom_outlined;
+        });
       });
     }
 
@@ -711,10 +732,29 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     }
 
     setState(() {
-      gameState = data;
-      statusMessage =
+      final lastActionMessage =
           data?['metadata']?['lastActionMessage']?.toString() ??
           '상태가 업데이트되었습니다.';
+
+      gameState = data;
+      statusMessage = lastActionMessage;
+      if (isMyTurnNow) {
+        feedbackMessage = '지금 당신 차례입니다. 서둘러 입력해주세요.';
+        _feedbackBackgroundColor = Colors.green.shade50;
+        _feedbackTextColor = Colors.green.shade900;
+        _feedbackIcon = Icons.notifications_active_outlined;
+      } else if (wasMyTurn && !isMyTurnNow) {
+        feedbackMessage = '입력이 전달되었습니다. 다음 플레이어를 기다려주세요.';
+        _feedbackBackgroundColor = Colors.blue.shade50;
+        _feedbackTextColor = Colors.blue.shade900;
+        _feedbackIcon = Icons.check_circle_outline;
+      } else {
+        feedbackMessage = lastActionMessage;
+        _feedbackBackgroundColor = Colors.orange.shade50;
+        _feedbackTextColor = Colors.orange.shade900;
+        _feedbackIcon = Icons.info_outline;
+      }
+
       isSubmitting = false;
     });
 
@@ -729,6 +769,10 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     setState(() {
       gameState = data?['gameState'];
       statusMessage = data?['message']?.toString() ?? '게임이 종료되었습니다.';
+      feedbackMessage = '게임 종료! 결과를 확인해주세요.';
+      _feedbackBackgroundColor = Colors.red.shade50;
+      _feedbackTextColor = Colors.red.shade900;
+      _feedbackIcon = Icons.flag_outlined;
       isSubmitting = false;
     });
 
@@ -824,6 +868,12 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       failureMessage: '숫자 제출에 실패했습니다.',
       onSuccess: () {
         numberController.clear();
+        setState(() {
+          feedbackMessage = '숫자 입력 성공!';
+          _feedbackBackgroundColor = Colors.blue.shade50;
+          _feedbackTextColor = Colors.blue.shade900;
+          _feedbackIcon = Icons.pin_outlined;
+        });
         AudioService.playThreeSixNineCue(value);
       },
     );
@@ -835,6 +885,12 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       text: '👏',
       failureMessage: '박수 제출에 실패했습니다.',
       onSuccess: () {
+        setState(() {
+          feedbackMessage = '짝! 박수 입력 성공!';
+          _feedbackBackgroundColor = Colors.purple.shade50;
+          _feedbackTextColor = Colors.purple.shade900;
+          _feedbackIcon = Icons.celebration_outlined;
+        });
         AudioService.playClap();
       },
     );
@@ -925,6 +981,35 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                       Text('기준 숫자: $expectedNumber'),
                     ],
                   ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: _feedbackBackgroundColor,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _feedbackBackgroundColor),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(_feedbackIcon, color: _feedbackTextColor),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        feedbackMessage,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: _feedbackTextColor,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 16),

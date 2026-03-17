@@ -1,6 +1,8 @@
 import 'dart:developer';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
+typedef SocketAckCallback = void Function(dynamic response);
+
 class SocketService {
   io.Socket? _socket;
 
@@ -68,6 +70,30 @@ class SocketService {
     Function(dynamic response) callback,
   ) {
     _socket?.emitWithAck(event, data, ack: callback);
+  }
+
+  void submitGameInput({
+    required String roomCode,
+    required String moveType,
+    int? value,
+    String? text,
+    String inputMode = 'touch',
+    String? recognizedText,
+    required SocketAckCallback callback,
+  }) {
+    final payload = <String, dynamic>{
+      'roomCode': roomCode.trim().toUpperCase(),
+      'moveType': moveType,
+      'inputMode': inputMode,
+    };
+
+    if (value != null) payload['value'] = value;
+    if (text != null && text.trim().isNotEmpty) payload['text'] = text.trim();
+    if (recognizedText != null && recognizedText.trim().isNotEmpty) {
+      payload['recognizedText'] = recognizedText.trim();
+    }
+
+    emitWithAck('game:submit', payload, callback);
   }
 
   void dispose() {
