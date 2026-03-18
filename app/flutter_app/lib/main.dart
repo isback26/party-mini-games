@@ -187,10 +187,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
     'beondegi': '번데기 게임',
   };
 
+  static const Map<String, List<int>> turnTimeOptionsByGame = {
+    'three_six_nine': [500, 1000, 3000, 5000],
+    'nunchi': [3000, 5000, 10000],
+    'beondegi': [500, 1000, 3000, 5000],
+  };
+
   String? currentRoomCode;
   List<dynamic> players = [];
   String? hostSocketId;
   String selectedGame = 'three_six_nine';
+  int? selectedTurnTimeLimitMs = 3000;
   String roomStatus = 'waiting';
   bool isLoading = false;
   String statusMessage = '로비에 입장했습니다.';
@@ -222,12 +229,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final nextHostSocketId = data['hostSocketId']?.toString();
     final nextSelectedGame = data['selectedGame']?.toString() ?? selectedGame;
     final nextRoomStatus = data['status']?.toString() ?? 'waiting';
+    final nextTurnTimeLimitMs = data['settings']?['turnTimeLimitMs'] as int?;
 
     setState(() {
       currentRoomCode = roomCode;
       players = nextPlayers;
       hostSocketId = nextHostSocketId;
       selectedGame = nextSelectedGame;
+      selectedTurnTimeLimitMs = nextTurnTimeLimitMs;
       roomStatus = nextRoomStatus;
       isLoading = false;
       statusMessage = '대기방 정보가 업데이트되었습니다.';
@@ -272,7 +281,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     widget.socketService.emitWithAck(
       'room:create',
-      {'nickname': widget.nickname},
+      {'nickname': widget.nickname, 'turnTimeLimitMs': selectedTurnTimeLimitMs},
       (response) {
         if (!mounted) return;
 
@@ -294,6 +303,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
           players = (room?['players'] as List?) ?? [];
           hostSocketId = room?['hostSocketId']?.toString();
           selectedGame = room?['selectedGame']?.toString() ?? selectedGame;
+          selectedTurnTimeLimitMs =
+              room?['settings']?['turnTimeLimitMs'] as int?;
           isLoading = false;
           statusMessage = '방이 생성되었습니다.';
         });
@@ -339,6 +350,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
           currentRoomCode = room?['code']?.toString() ?? roomCode;
           hostSocketId = room?['hostSocketId']?.toString();
           selectedGame = room?['selectedGame']?.toString() ?? selectedGame;
+          selectedTurnTimeLimitMs =
+              room?['settings']?['turnTimeLimitMs'] as int?;
           players = (room?['players'] as List?) ?? [];
           isLoading = false;
           statusMessage = '방에 참가했습니다.';
@@ -374,11 +387,56 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
         setState(() {
           selectedGame = response['selectedGame']?.toString() ?? gameType;
+          final room = response['room'] as Map<String, dynamic>?;
+          selectedTurnTimeLimitMs =
+              room?['settings']?['turnTimeLimitMs'] as int?;
           isLoading = false;
           statusMessage = '게임이 선택되었습니다.';
         });
       },
     );
+  }
+
+  Future<void> _updateTurnTimeLimit(int turnTimeLimitMs) async {
+    if (currentRoomCode == null || isLoading) return;
+
+    setState(() {
+      isLoading = true;
+      statusMessage = '제한시간을 변경하는 중...';
+    });
+
+    widget.socketService.emitWithAck(
+      'room:update_settings',
+      {'roomCode': currentRoomCode, 'turnTimeLimitMs': turnTimeLimitMs},
+      (response) {
+        if (!mounted) return;
+
+        final ok = response != null && response['ok'] == true;
+
+        if (!ok) {
+          setState(() {
+            isLoading = false;
+            statusMessage =
+                response?['message']?.toString() ?? '제한시간 변경에 실패했습니다.';
+          });
+          return;
+        }
+
+        setState(() {
+          final room = response['room'] as Map<String, dynamic>?;
+          selectedTurnTimeLimitMs =
+              room?['settings']?['turnTimeLimitMs'] as int?;
+          isLoading = false;
+          statusMessage = '제한시간이 변경되었습니다.';
+        });
+      },
+    );
+  }
+
+  String _turnTimeLabel(int ms) {
+    if (ms == 500) return '0.5초';
+    if (ms == 1000) return '1초';
+    return '${ms ~/ 1000}초';
   }
 
   Future<void> _startGame() async {
@@ -424,6 +482,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final mySocketId = widget.socketService.socket?.id;
     final isHost = mySocketId != null && hostSocketId == mySocketId;
     final currentGameLabel = gameLabels[selectedGame] ?? selectedGame;
+    final currentTimeOptions =
+        turnTimeOptionsByGame[selectedGame] ?? const <int>[];
 
     return Scaffold(
       appBar: AppBar(title: const Text('게임 로비'), centerTitle: true),
@@ -569,6 +629,36 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           }).toList(),
                         ),
                         const SizedBox(height: 16),
+                        const Text(
+                          '턴 제한시간',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: currentTimeOptions.map((ms) {
+                            final isSelected = selectedTurnTimeLimitMs == ms;
+                            return ChoiceChip(
+                              label: Text(_turnTimeLabel(ms)),
+                              selected: isSelected,
+                              onSelected: (!isHost || roomStatus == 'playing')
+                                  ? null
+                                  : (_) => _updateTurnTimeLimit(ms),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          selectedTurnTimeLimitMs == null
+                              ? '제한시간을 선택해주세요.'
+                              : '현재 제한시간: ${_turnTimeLabel(selectedTurnTimeLimitMs!)}',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
                           height: 48,
@@ -576,7 +666,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
                             onPressed:
                                 (!isHost ||
                                     roomStatus == 'playing' ||
-                                    players.length < 2)
+                                    players.length < 2 ||
+                                    selectedTurnTimeLimitMs == null)
                                 ? null
                                 : _startGame,
                             child: Text(
@@ -588,8 +679,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         Text(
                           players.length < 2
                               ? '게임 시작은 최소 2명부터 가능합니다.'
+                              : selectedTurnTimeLimitMs == null
+                              ? '게임을 시작하기 전에 턴 제한시간을 먼저 선택해주세요.'
                               : isHost
-                              ? '방장이 게임을 선택하고 시작할 수 있습니다.'
+                              ? '방장이 게임과 제한시간을 선택하고 시작할 수 있습니다.'
                               : '방장이 게임을 시작할 때까지 기다려주세요.',
                           style: const TextStyle(fontSize: 13),
                         ),

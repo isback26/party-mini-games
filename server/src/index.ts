@@ -1,6 +1,12 @@
 import express from "express";
 import { createGameEngine } from "./games/createGameEngine";
-import { GameState, GameRoom, GameType } from "./games/types";
+import {
+  GameState,
+  GameRoom,
+  GameType,
+  TurnTimeLimitMs,
+  isAllowedTurnTimeLimitMs,
+} from "./games/types";
 import cors from "cors";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -36,6 +42,16 @@ type GameSubmitEventPayload = {
   recognizedText?: string;
 };
 
+type RoomCreateEventPayload = {
+  nickname: string;
+  turnTimeLimitMs?: TurnTimeLimitMs | null;
+};
+
+type RoomUpdateSettingsEventPayload = {
+  roomCode: string;
+  turnTimeLimitMs: TurnTimeLimitMs;
+};
+
 function generateRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let result = "";
@@ -48,12 +64,24 @@ function generateRoomCode(): string {
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id}`);
 
-  socket.on("room:create", (payload: { nickname: string }, callback) => {
+  socket.on("room:create", (payload: RoomCreateEventPayload, callback) => {
     try {
       const nickname = payload?.nickname?.trim();
+      const requestedTurnTimeLimitMs = payload?.turnTimeLimitMs ?? null;
 
       if (!nickname) {
         callback({ ok: false, message: "닉네임을 입력해주세요." });
+        return;
+      }
+
+      if (
+        requestedTurnTimeLimitMs !== null &&
+        !isAllowedTurnTimeLimitMs("three_six_nine", requestedTurnTimeLimitMs)
+      ) {
+        callback({
+          ok: false,
+          message: "369 게임 제한시간 옵션이 올바르지 않습니다.",
+        });
         return;
       }
 
@@ -66,6 +94,9 @@ io.on("connection", (socket) => {
         code,
         hostSocketId: socket.id,
         selectedGame: "three_six_nine",
+        settings: {
+          turnTimeLimitMs: requestedTurnTimeLimitMs,
+        },
         status: "waiting",
         players: [
           {
@@ -177,6 +208,13 @@ io.on("connection", (socket) => {
 
         room.selectedGame = gameType;
 
+        if (
+        room.settings.turnTimeLimitMs !== null &&
+        !isAllowedTurnTimeLimitMs(gameType, room.settings.turnTimeLimitMs)
+      ) {
+        room.settings.turnTimeLimitMs = null;
+      }
+
         callback({
           ok: true,
           selectedGame: room.selectedGame,
@@ -186,6 +224,61 @@ io.on("connection", (socket) => {
         io.to(roomCode).emit("room:update", room);
       } catch (error) {
         callback({ ok: false, message: "게임 선택 중 오류가 발생했습니다." });
+      }
+    }
+  );
+
+  socket.on(
+    "room:update_settings",
+    (
+      payload: RoomUpdateSettingsEventPayload,
+      callback: (response: Record<string, unknown>) => void
+    ) => {
+      try {
+        const roomCode = payload?.roomCode?.trim().toUpperCase();
+        const turnTimeLimitMs = payload?.turnTimeLimitMs;
+
+        if (!roomCode) {
+          callback({ ok: false, message: "방 코드가 필요합니다." });
+          return;
+        }
+
+        const room = rooms.get(roomCode);
+        if (!room) {
+          callback({ ok: false, message: "존재하지 않는 방입니다." });
+          return;
+        }
+
+        if (room.hostSocketId !== socket.id) {
+          callback({ ok: false, message: "방장만 설정을 변경할 수 있습니다." });
+          return;
+        }
+
+        if (room.status !== "waiting") {
+          callback({
+            ok: false,
+            message: "게임 진행 중에는 제한시간을 변경할 수 없습니다.",
+          });
+          return;
+        }
+
+        if (!isAllowedTurnTimeLimitMs(room.selectedGame, turnTimeLimitMs)) {
+          callback({
+            ok: false,
+            message: "선택한 게임에서 사용할 수 없는 제한시간입니다.",
+          });
+          return;
+        }
+
+        room.settings.turnTimeLimitMs = turnTimeLimitMs;
+
+        callback({
+          ok: true,
+          room,
+        });
+        io.to(roomCode).emit("room:update", room);
+      } catch (error) {
+        callback({ ok: false, message: "방 설정 변경 중 오류가 발생했습니다." });
       }
     }
   );
@@ -221,6 +314,11 @@ io.on("connection", (socket) => {
           return;
         }
 
+        if (room.settings.turnTimeLimitMs === null) {
+          callback({ ok: false, message: "턴 제한시간을 먼저 선택해주세요." });
+          return;
+        }
+
         const engine = createGameEngine(room.selectedGame);
         const gameState = engine.createInitialState(room);
 
@@ -230,6 +328,7 @@ io.on("connection", (socket) => {
         callback({
           ok: true,
           gameType: room.selectedGame,
+          turnTimeLimitMs: room.settings.turnTimeLimitMs,
           gameState,
         });
 
@@ -238,6 +337,7 @@ io.on("connection", (socket) => {
         io.to(roomCode).emit("game:started", {
           roomCode: room.code,
           gameType: room.selectedGame,
+          turnTimeLimitMs: room.settings.turnTimeLimitMs,
           gameState,
         });
       } catch (error) {
