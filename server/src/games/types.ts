@@ -44,6 +44,8 @@ export type GameState<TMetadata extends Record<string, unknown> = Record<string,
   roomCode: string;
   phase: "waiting_start" | "playing" | "finished";
   currentTurnSocketId: string | null;
+  turnStartedAt: number | null;
+  turnDeadlineAt: number | null;
   round: number;
   metadata: TMetadata;
 };

@@ -52,6 +52,44 @@ type RoomUpdateSettingsEventPayload = {
   turnTimeLimitMs: TurnTimeLimitMs;
 };
 
+const TURN_TIMEOUT_CHECK_INTERVAL_MS = 100;
+
+function buildTimeoutFinishedState(gameState: GameState): GameState {
+  return {
+    ...gameState,
+    phase: "finished",
+    currentTurnSocketId: null,
+    turnStartedAt: null,
+    turnDeadlineAt: null,
+  };
+}
+
+function getPlayerNickname(room: GameRoom, socketId: string | null): string {
+  if (!socketId) {
+    return "알 수 없는 플레이어";
+  }
+
+  return (
+    room.players.find((player) => player.socketId === socketId)?.nickname ??
+    "알 수 없는 플레이어"
+  );
+}
+
+function resetTurnTimer(
+  gameState: GameState,
+  turnTimeLimitMs: number | null
+): GameState {
+  const turnStartedAt = Date.now();
+  const turnDeadlineAt =
+    turnTimeLimitMs != null ? turnStartedAt + turnTimeLimitMs : null;
+
+  return {
+    ...gameState,
+    turnStartedAt,
+    turnDeadlineAt,
+  };
+}
+
 function generateRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let result = "";
@@ -464,10 +502,25 @@ io.on("connection", (socket) => {
           if (room.status === "playing" && room.players.length < 2) {
             room.status = "waiting";
           }
-          if (gameState?.currentTurnSocketId === socket.id) {
-            gameState.currentTurnSocketId = room.players[0]?.socketId ?? null;
-            roomGameStates.set(roomCode, gameState);
-            io.to(roomCode).emit("game:state", gameState);
+          if (room.status === "waiting" && gameState) {
+            const stoppedState: GameState = {
+              ...gameState,
+              currentTurnSocketId: room.players[0]?.socketId ?? null,
+              turnStartedAt: null,
+              turnDeadlineAt: null,
+            };
+            roomGameStates.set(roomCode, stoppedState);
+            io.to(roomCode).emit("game:state", stoppedState);
+          } else if (gameState?.currentTurnSocketId === socket.id) {
+            const reassignedState = resetTurnTimer(
+              {
+                ...gameState,
+                currentTurnSocketId: room.players[0]?.socketId ?? null,
+              },
+              room.settings.turnTimeLimitMs
+            );
+            roomGameStates.set(roomCode, reassignedState);
+            io.to(roomCode).emit("game:state", reassignedState);
           }
           io.to(roomCode).emit("room:update", room);
         }
@@ -475,6 +528,43 @@ io.on("connection", (socket) => {
     }
   });
 });
+
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [roomCode, room] of rooms.entries()) {
+    if (room.status !== "playing") {
+      continue;
+    }
+
+    const gameState = roomGameStates.get(roomCode);
+    if (!gameState) {
+      continue;
+    }
+    if (gameState.phase !== "playing" || gameState.turnDeadlineAt == null) {
+      continue;
+    }
+
+    if (now < gameState.turnDeadlineAt) {
+      continue;
+    }
+
+    const loserNickname = getPlayerNickname(room, gameState.currentTurnSocketId);
+    const finishedState = buildTimeoutFinishedState(gameState);
+
+    room.status = "waiting";
+    roomGameStates.set(roomCode, finishedState);
+
+    io.to(roomCode).emit("room:update", room);
+    io.to(roomCode).emit("game:state", finishedState);
+    io.to(roomCode).emit("game:over", {
+      roomCode,
+      gameType: room.selectedGame,
+      gameState: finishedState,
+      message: `${loserNickname}님이 제한시간을 초과했습니다.`,
+    });
+  }
+}, TURN_TIMEOUT_CHECK_INTERVAL_MS);
 
 const PORT = 3000;
 

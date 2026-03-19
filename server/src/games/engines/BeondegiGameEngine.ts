@@ -15,6 +15,8 @@ export class BeondegiGameEngine implements GameEngine {
       roomCode: room.code,
       phase: "playing",
       currentTurnSocketId: room.players[0]?.socketId ?? null,
+      turnStartedAt: null,
+      turnDeadlineAt: null,
       round: 1,
       metadata: {
         introMessage: "게임은 시작됐다. 확률은 2분의 1 이~히히, 이~히히",

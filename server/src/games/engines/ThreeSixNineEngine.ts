@@ -25,12 +25,19 @@ export class ThreeSixNineEngine implements GameEngine {
   createInitialState(room: GameRoom): GameState<ThreeSixNineMetadata> {
     const expectedNumber = 1;
     const expectedMove = this.getExpectedMove(expectedNumber);
+    const turnStartedAt = Date.now();
+    const turnDeadlineAt =
+      room.settings.turnTimeLimitMs != null
+        ? turnStartedAt + room.settings.turnTimeLimitMs
+        : null;
 
     return {
       gameType: this.gameType,
       roomCode: room.code,
       phase: "playing",
       currentTurnSocketId: room.players[0]?.socketId ?? null,
+      turnStartedAt,
+      turnDeadlineAt,
       round: 1,
       metadata: {
         introMessage: "삼육구, 삼육구",
@@ -84,6 +91,11 @@ submitTurn(
     const nextExpectedNumber = expectedNumber + 1;
     const nextExpectedMove = this.getExpectedMove(nextExpectedNumber);
     const nextTurnSocketId = this.getNextPlayerSocketId(room, payload.playerSocketId);
+    const nextTurnStartedAt = Date.now();
+    const nextTurnDeadlineAt =
+      room.settings.turnTimeLimitMs != null
+        ? nextTurnStartedAt + room.settings.turnTimeLimitMs
+        : null;
 
     return {
       isCorrect: true,
@@ -95,6 +107,8 @@ submitTurn(
       gameState: {
         ...gameState,
         round: Number(gameState.round ?? 1) + 1,
+        turnStartedAt: nextTurnStartedAt,
+        turnDeadlineAt: nextTurnDeadlineAt,
         currentTurnSocketId: nextTurnSocketId,
         metadata: {
           ...metadata,

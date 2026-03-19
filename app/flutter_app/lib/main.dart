@@ -1,5 +1,5 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'services/socket_service.dart';
 import 'services/audio_service.dart';
 
@@ -746,16 +746,16 @@ class ThreeSixNineGameScreen extends StatefulWidget {
 }
 
 class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
-  final TextEditingController numberController = TextEditingController();
-
   dynamic gameState;
+  String _typedNumber = '';
   String statusMessage = '369 게임이 시작되었습니다.';
   String feedbackMessage = '게임이 시작되었습니다. 내 차례를 기다려주세요.';
   bool isSubmitting = false;
   String? _lastTurnSocketId;
-  Color _feedbackBackgroundColor = Colors.blue.shade50;
-  Color _feedbackTextColor = Colors.blue.shade900;
-  IconData _feedbackIcon = Icons.info_outline;
+  Timer? _turnTimer;
+  double _turnTimeProgress = 1.0;
+  int _remainingTurnMs = 0;
+  bool _isGameOverDialogOpen = false;
 
   @override
   void initState() {
@@ -763,6 +763,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     gameState = widget.initialGameState;
     _lastTurnSocketId = gameState?['currentTurnSocketId']?.toString();
 
+    _syncTurnTimer(gameState);
     final mySocketId = widget.socketService.socket?.id;
     final isMyInitialTurn =
         mySocketId != null &&
@@ -775,9 +776,6 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
         if (!mounted) return;
         setState(() {
           feedbackMessage = '지금 당신 차례입니다. 입력해주세요.';
-          _feedbackBackgroundColor = Colors.green.shade50;
-          _feedbackTextColor = Colors.green.shade900;
-          _feedbackIcon = Icons.notifications_active_outlined;
         });
       });
     } else {
@@ -785,9 +783,6 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
         if (!mounted) return;
         setState(() {
           feedbackMessage = '상대방 차례입니다. 화면을 보고 기다려주세요.';
-          _feedbackBackgroundColor = Colors.orange.shade50;
-          _feedbackTextColor = Colors.orange.shade900;
-          _feedbackIcon = Icons.hourglass_bottom_outlined;
         });
       });
     }
@@ -802,8 +797,280 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   void dispose() {
     widget.socketService.off('game:state');
     widget.socketService.off('game:over');
-    numberController.dispose();
+    _turnTimer?.cancel();
     super.dispose();
+  }
+
+  void _syncTurnTimer(dynamic nextGameState) {
+    _turnTimer?.cancel();
+
+    final phase = nextGameState?['phase']?.toString();
+    final turnStartedAt = nextGameState?['turnStartedAt'] as int?;
+    final turnDeadlineAt = nextGameState?['turnDeadlineAt'] as int?;
+
+    if (phase != 'playing' || turnStartedAt == null || turnDeadlineAt == null) {
+      if (!mounted) return;
+      setState(() {
+        _turnTimeProgress = 0;
+        _remainingTurnMs = 0;
+      });
+      return;
+    }
+
+    void updateTick() {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final totalMs = (turnDeadlineAt - turnStartedAt).clamp(1, 1 << 30);
+      final remainingMs = (turnDeadlineAt - now).clamp(0, totalMs);
+      final progress = remainingMs / totalMs;
+
+      if (!mounted) return;
+      setState(() {
+        _remainingTurnMs = remainingMs;
+        _turnTimeProgress = progress.clamp(0.0, 1.0);
+      });
+    }
+
+    updateTick();
+    _turnTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      updateTick();
+    });
+  }
+
+  String _formatRemainingTurnTime(int ms) {
+    if (ms <= 0) return '0.0초';
+    final seconds = ms / 1000;
+    return '${seconds.toStringAsFixed(1)}초';
+  }
+
+  Color _turnBarColor() {
+    if (_turnTimeProgress <= 0.2) {
+      return Colors.red;
+    }
+    if (_turnTimeProgress <= 0.5) {
+      return Colors.orange;
+    }
+    return Colors.green;
+  }
+
+  String _turnTimerLabel(bool isMyTurn, String phase) {
+    if (phase != 'playing') {
+      return '게임 종료';
+    }
+
+    if (_remainingTurnMs <= 0) {
+      return isMyTurn ? '입력 시간 종료' : '상대 입력 시간 종료';
+    }
+
+    return isMyTurn
+        ? '내 남은 시간: ${_formatRemainingTurnTime(_remainingTurnMs)}'
+        : '상대 남은 시간: ${_formatRemainingTurnTime(_remainingTurnMs)}';
+  }
+
+  Widget _buildTopGamePanel({
+    required bool isMyTurn,
+    required String phase,
+    required String expectedDisplayText,
+    required dynamic currentPlayerNickname,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.blue.shade50,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          '현재 턴: ',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            '${currentPlayerNickname ?? '-'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  const SizedBox(height: 8),
+                    Text(
+                      isMyTurn ? '지금은 당신의 턴입니다.' : '상대 턴입니다.',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: isMyTurn ? Colors.green : Colors.orange,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _turnTimerLabel(isMyTurn, phase),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _turnBarColor(),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        value: _turnTimeProgress,
+                        minHeight: 10,
+                        backgroundColor: Colors.grey.shade300,
+                        valueColor: AlwaysStoppedAnimation<Color>(_turnBarColor()),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            const SizedBox(width: 12),
+              Container(
+                width: 92,
+                height: 92,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                alignment: Alignment.center,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    expectedDisplayText,
+                    style: const TextStyle(
+                      fontSize: 34,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBottomInputPanel({
+    required bool canSubmit,
+    required bool canSubmitNumber,
+    required String typedNumberText,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: Container(
+          width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  height: 54,
+                  alignment: Alignment.centerRight,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade400),
+                  ),
+                  child: Text(
+                    typedNumberText,
+                    style: TextStyle(
+                      fontSize: _typedNumber.length >= 6 ? 22 : 28,
+                      fontWeight: FontWeight.bold,
+                      color: _typedNumber.isEmpty
+                          ? Colors.grey.shade500
+                          : Colors.black,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: GridView.count(
+                    crossAxisCount: 3,
+                    physics: const NeverScrollableScrollPhysics(),
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                    childAspectRatio: 1.3,
+                    children: [
+                      _buildNumberPadKey('1', canSubmit),
+                      _buildNumberPadKey('2', canSubmit),
+                      _buildNumberPadKey('3', canSubmit),
+                      _buildNumberPadKey('4', canSubmit),
+                      _buildNumberPadKey('5', canSubmit),
+                      _buildNumberPadKey('6', canSubmit),
+                      _buildNumberPadKey('7', canSubmit),
+                      _buildNumberPadKey('8', canSubmit),
+                      _buildNumberPadKey('9', canSubmit),
+                      _buildNumberPadButton(
+                        label: '←',
+                        onTap: canSubmit ? _backspaceDigit : null,
+                      ),
+                      _buildNumberPadKey('0', canSubmit),
+                      _buildNumberPadButton(
+                        label: '전체삭제',
+                        onTap: canSubmit ? _clearTypedNumber : null,
+                        backgroundColor: Colors.grey.shade300,
+                        foregroundColor: Colors.black87,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 52,
+          child: ElevatedButton(
+            onPressed: canSubmitNumber ? _submitNumber : null,
+            child: const Text('숫자 제출'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 52,
+          child: ElevatedButton(
+            onPressed: canSubmit ? _submitClap : null,
+            child: const Text('박수 입력 👏'),
+          ),
+        ),
+      ],
+    );
   }
 
   void _handleGameState(dynamic data) {
@@ -824,6 +1091,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       AudioService.playTurnStart();
     }
 
+    _syncTurnTimer(data);
     setState(() {
       final lastActionMessage =
           data?['metadata']?['lastActionMessage']?.toString() ??
@@ -833,19 +1101,10 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       statusMessage = lastActionMessage;
       if (isMyTurnNow) {
         feedbackMessage = '지금 당신 차례입니다. 서둘러 입력해주세요.';
-        _feedbackBackgroundColor = Colors.green.shade50;
-        _feedbackTextColor = Colors.green.shade900;
-        _feedbackIcon = Icons.notifications_active_outlined;
       } else if (wasMyTurn && !isMyTurnNow) {
         feedbackMessage = '입력이 전달되었습니다. 다음 플레이어를 기다려주세요.';
-        _feedbackBackgroundColor = Colors.blue.shade50;
-        _feedbackTextColor = Colors.blue.shade900;
-        _feedbackIcon = Icons.check_circle_outline;
       } else {
         feedbackMessage = lastActionMessage;
-        _feedbackBackgroundColor = Colors.orange.shade50;
-        _feedbackTextColor = Colors.orange.shade900;
-        _feedbackIcon = Icons.info_outline;
       }
 
       isSubmitting = false;
@@ -857,37 +1116,45 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   void _handleGameOver(dynamic data) {
     if (!mounted) return;
 
+    if (_isGameOverDialogOpen) {
+      return;
+    }
+
     AudioService.playGameOver();
 
     setState(() {
+      _turnTimer?.cancel();
       gameState = data?['gameState'];
       statusMessage = data?['message']?.toString() ?? '게임이 종료되었습니다.';
       feedbackMessage = '게임 종료! 결과를 확인해주세요.';
-      _feedbackBackgroundColor = Colors.red.shade50;
-      _feedbackTextColor = Colors.red.shade900;
-      _feedbackIcon = Icons.flag_outlined;
       isSubmitting = false;
     });
+
+    _syncTurnTimer(data?['gameState']);
+    _isGameOverDialogOpen = true;
 
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           title: const Text('게임 종료'),
           content: Text(statusMessage),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                Navigator.pop(context);
+              Navigator.of(dialogContext).pop();
+                if (mounted && Navigator.of(context).canPop()) {
+                  Navigator.of(context).pop();
+                }
               },
               child: const Text('로비로 돌아가기'),
             ),
           ],
         );
       },
-    );
+    ).then((_) {
+      _isGameOverDialogOpen = false;
+    });
   }
 
   String _nicknameBySocketId(String? socketId) {
@@ -945,8 +1212,37 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     );
   }
 
+  void _appendDigit(String digit) {
+    if (isSubmitting) return;
+    if (!RegExp(r'^\d$').hasMatch(digit)) return;
+
+    setState(() {
+      if (_typedNumber == '0') {
+        _typedNumber = digit;
+      } else {
+        _typedNumber += digit;
+      }
+    });
+  }
+
+  void _backspaceDigit() {
+    if (isSubmitting || _typedNumber.isEmpty) return;
+
+    setState(() {
+      _typedNumber = _typedNumber.substring(0, _typedNumber.length - 1);
+    });
+  }
+
+  void _clearTypedNumber() {
+    if (isSubmitting || _typedNumber.isEmpty) return;
+
+    setState(() {
+      _typedNumber = '';
+    });
+  }
+
   Future<void> _submitNumber() async {
-    final value = int.tryParse(numberController.text.trim());
+    final value = int.tryParse(_typedNumber.trim());
 
     if (value == null) {
       ScaffoldMessenger.of(
@@ -960,15 +1256,43 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       value: value,
       failureMessage: '숫자 제출에 실패했습니다.',
       onSuccess: () {
-        numberController.clear();
+        _typedNumber = '';
         setState(() {
           feedbackMessage = '숫자 입력 성공!';
-          _feedbackBackgroundColor = Colors.blue.shade50;
-          _feedbackTextColor = Colors.blue.shade900;
-          _feedbackIcon = Icons.pin_outlined;
         });
         AudioService.playThreeSixNineCue(value);
       },
+    );
+  }
+
+  Widget _buildNumberPadButton({
+    required String label,
+    required VoidCallback? onTap,
+    Color? backgroundColor,
+    Color? foregroundColor,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 60,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: backgroundColor,
+          foregroundColor: foregroundColor,
+          textStyle: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        child: Text(label),
+      ),
+    );
+  }
+
+  Widget _buildNumberPadKey(String digit, bool enabled) {
+    return _buildNumberPadButton(
+      label: digit,
+      onTap: enabled ? () => _appendDigit(digit) : null,
     );
   }
 
@@ -980,9 +1304,6 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       onSuccess: () {
         setState(() {
           feedbackMessage = '짝! 박수 입력 성공!';
-          _feedbackBackgroundColor = Colors.purple.shade50;
-          _feedbackTextColor = Colors.purple.shade900;
-          _feedbackIcon = Icons.celebration_outlined;
         });
         AudioService.playClap();
       },
@@ -992,174 +1313,47 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   @override
   Widget build(BuildContext context) {
     final mySocketId = widget.socketService.socket?.id;
+    final typedNumberText = _typedNumber.isEmpty ? '입력 없음' : _typedNumber;
+
     final currentTurnSocketId = gameState?['currentTurnSocketId']?.toString();
     final isMyTurn = mySocketId != null && mySocketId == currentTurnSocketId;
-    final expectedNumber =
-        gameState?['metadata']?['expectedNumber']?.toString() ?? '-';
     final expectedDisplayText =
         gameState?['metadata']?['expectedDisplayText']?.toString() ?? '-';
     final phase = gameState?['phase']?.toString() ?? 'playing';
     final canSubmit = isMyTurn && phase == 'playing' && !isSubmitting;
+    final canSubmitNumber = canSubmit && _typedNumber.isNotEmpty;
+    final currentPlayerNickname = _nicknameBySocketId(currentTurnSocketId);
 
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: const Text('369 게임'),
         centerTitle: true,
         automaticallyImplyLeading: false,
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '방 코드: ${widget.roomCode}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text('내 닉네임: ${widget.nickname}'),
-                      const SizedBox(height: 8),
-                      Text(
-                        '현재 턴: ${_nicknameBySocketId(currentTurnSocketId)}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        isMyTurn ? '지금은 당신의 턴입니다.' : '상대방 차례를 기다려주세요.',
-                        style: TextStyle(
-                          color: isMyTurn ? Colors.green : Colors.orange,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
+              Expanded(
+                flex: 3,
+                child: _buildTopGamePanel(
+                  isMyTurn: isMyTurn,
+                  phase: phase,
+                  expectedDisplayText: expectedDisplayText,
+                  currentPlayerNickname: currentPlayerNickname,
                 ),
               ),
-              const SizedBox(height: 16),
-              Card(
-                color: Colors.blue.shade50,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      const Text(
-                        '이번 차례 정답',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        expectedDisplayText,
-                        style: const TextStyle(
-                          fontSize: 36,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text('기준 숫자: $expectedNumber'),
-                    ],
-                  ),
+              const SizedBox(height: 10),
+              Expanded(
+                flex: 7,
+                child: _buildBottomInputPanel(
+                  canSubmit: canSubmit,
+                  canSubmitNumber: canSubmitNumber,
+                  typedNumberText: typedNumberText,
                 ),
               ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: _feedbackBackgroundColor,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: _feedbackBackgroundColor),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(_feedbackIcon, color: _feedbackTextColor),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        feedbackMessage,
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: _feedbackTextColor,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: numberController,
-                enabled: canSubmit,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: InputDecoration(
-                  labelText: '숫자 입력',
-                  hintText: '예: 1, 2, 4, 5, 10...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: canSubmit ? _submitNumber : null,
-                  child: const Text('숫자 제출'),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: canSubmit ? _submitClap : null,
-                  child: const Text('박수 입력 👏'),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade200,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  statusMessage,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              if (isSubmitting)
-                const Center(child: CircularProgressIndicator()),
-              OutlinedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                },
-                child: const Text('로비로 돌아가기'),
-              ),
-              const SizedBox(height: 8),
             ],
           ),
         ),

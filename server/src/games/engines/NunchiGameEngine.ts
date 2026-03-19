@@ -15,6 +15,8 @@ export class NunchiGameEngine implements GameEngine {
       roomCode: room.code,
       phase: "playing",
       currentTurnSocketId: null,
+      turnStartedAt: null,
+      turnDeadlineAt: null,
       round: 1,
       metadata: {
         introMessage: "시작!!",
