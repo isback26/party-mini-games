@@ -10,6 +10,8 @@ type ThreeSixNineMoveType = "number" | "clap";
 
 type ThreeSixNineMetadata = {
   introMessage: string;
+  countdownStartedAt: number | null;
+  countdownEndsAt: number | null;
   expectedNumber: number;
   clapNumbers: number[];
   expectedMoveType: ThreeSixNineMoveType;
@@ -25,22 +27,21 @@ export class ThreeSixNineEngine implements GameEngine {
   createInitialState(room: GameRoom): GameState<ThreeSixNineMetadata> {
     const expectedNumber = 1;
     const expectedMove = this.getExpectedMove(expectedNumber);
-    const turnStartedAt = Date.now();
-    const turnDeadlineAt =
-      room.settings.turnTimeLimitMs != null
-        ? turnStartedAt + room.settings.turnTimeLimitMs
-        : null;
+    const countdownStartedAt = Date.now();
+    const countdownEndsAt = countdownStartedAt + 4000;
 
     return {
       gameType: this.gameType,
       roomCode: room.code,
-      phase: "playing",
+      phase: "waiting_start",
       currentTurnSocketId: room.players[0]?.socketId ?? null,
-      turnStartedAt,
-      turnDeadlineAt,
+      turnStartedAt: null,
+      turnDeadlineAt: null,
       round: 1,
       metadata: {
         introMessage: "삼육구, 삼육구",
+        countdownStartedAt,
+        countdownEndsAt,
         expectedNumber,
         clapNumbers: [3, 6, 9],
         expectedMoveType: expectedMove.moveType,
@@ -133,6 +134,10 @@ submitTurn(
     return {
       introMessage:
         typeof metadata.introMessage === "string" ? metadata.introMessage : "삼육구, 삼육구",
+      countdownStartedAt:
+        typeof metadata.countdownStartedAt === "number" ? metadata.countdownStartedAt : null,
+      countdownEndsAt:
+        typeof metadata.countdownEndsAt === "number" ? metadata.countdownEndsAt : null,
       expectedNumber,
       clapNumbers: Array.isArray(metadata.clapNumbers)
         ? (metadata.clapNumbers as number[])

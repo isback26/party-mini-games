@@ -1,4 +1,5 @@
 export type GameType = "three_six_nine" | "nunchi" | "beondegi";
+export type ThreeSixNineDifficulty = "easy" | "normal" | "hard";
 
 export type TurnTimeLimitMs = 500 | 1000 | 3000 | 5000 | 10000;
 
@@ -11,8 +12,21 @@ export const TURN_TIME_LIMIT_OPTIONS_BY_GAME: Record<
   beondegi: [500, 1000, 3000, 5000],
 };
 
+export const THREE_SIX_NINE_DIFFICULTY_OPTIONS = [
+  "easy",
+  "normal",
+  "hard",
+] as const satisfies readonly ThreeSixNineDifficulty[];
+
 export type GameRoomSettings = {
   turnTimeLimitMs: TurnTimeLimitMs | null;
+  difficulty: ThreeSixNineDifficulty;
+};
+
+export function isAllowedThreeSixNineDifficulty(
+  value: unknown
+): value is ThreeSixNineDifficulty {
+  return THREE_SIX_NINE_DIFFICULTY_OPTIONS.includes(value as ThreeSixNineDifficulty);
 };
 
 export function isAllowedTurnTimeLimitMs(

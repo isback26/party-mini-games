@@ -485,7 +485,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final inRoom = currentRoomCode != null && currentRoomCode!.isNotEmpty;
     final mySocketId = widget.socketService.socket?.id;
     final isHost = mySocketId != null && hostSocketId == mySocketId;
-    final currentGameLabel = gameLabels[selectedGame] ?? selectedGame;
     final currentTimeOptions =
         turnTimeOptionsByGame[selectedGame] ?? const <int>[];
 
@@ -774,14 +773,15 @@ class ThreeSixNineGameScreen extends StatefulWidget {
 class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   dynamic gameState;
   String _typedNumber = '';
-  String statusMessage = '369 게임이 시작되었습니다.';
-  String feedbackMessage = '게임이 시작되었습니다. 내 차례를 기다려주세요.';
+  String statusMessage = '369 게임 준비 중입니다.';
+  String feedbackMessage = '시작 구호가 끝나면 입력이 시작됩니다.';
   bool isSubmitting = false;
   String? _lastTurnSocketId;
   Timer? _turnTimer;
   double _turnTimeProgress = 1.0;
   int _remainingTurnMs = 0;
   bool _isGameOverDialogOpen = false;
+  int _countdownRemainingMs = 0;
 
   @override
   void initState() {
@@ -790,13 +790,21 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     _lastTurnSocketId = gameState?['currentTurnSocketId']?.toString();
 
     _syncTurnTimer(gameState);
+    final initialPhase = gameState?['phase']?.toString() ?? 'waiting_start';
     final mySocketId = widget.socketService.socket?.id;
     final isMyInitialTurn =
         mySocketId != null &&
         _lastTurnSocketId != null &&
         mySocketId == _lastTurnSocketId;
 
-    if (isMyInitialTurn) {
+    if (initialPhase == 'waiting_start') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          feedbackMessage = '3, 2, 1, 시작 카운트다운 후 입력이 시작됩니다.';
+        });
+      });
+    } else if (isMyInitialTurn) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         AudioService.playTurnStart();
         if (!mounted) return;
@@ -833,10 +841,33 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     final phase = nextGameState?['phase']?.toString();
     final turnStartedAt = nextGameState?['turnStartedAt'] as int?;
     final turnDeadlineAt = nextGameState?['turnDeadlineAt'] as int?;
+    final countdownEndsAt =
+        nextGameState?['metadata']?['countdownEndsAt'] as int?;
+
+    if (phase == 'waiting_start' && countdownEndsAt != null) {
+      void updateCountdown() {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final remainingMs = (countdownEndsAt - now).clamp(0, 4000);
+
+        if (!mounted) return;
+        setState(() {
+          _countdownRemainingMs = remainingMs;
+          _turnTimeProgress = 0;
+          _remainingTurnMs = 0;
+        });
+      }
+
+      updateCountdown();
+      _turnTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+        updateCountdown();
+      });
+      return;
+    }
 
     if (phase != 'playing' || turnStartedAt == null || turnDeadlineAt == null) {
       if (!mounted) return;
       setState(() {
+        _countdownRemainingMs = 0;
         _turnTimeProgress = 0;
         _remainingTurnMs = 0;
       });
@@ -852,6 +883,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       if (!mounted) return;
       setState(() {
         _remainingTurnMs = remainingMs;
+        _countdownRemainingMs = 0;
         _turnTimeProgress = progress.clamp(0.0, 1.0);
       });
     }
@@ -879,6 +911,10 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   }
 
   String _turnTimerLabel(bool isMyTurn, String phase) {
+    if (phase == 'waiting_start') {
+      return '시작 준비 중';
+    }
+
     if (phase != 'playing') {
       return '게임 종료';
     }
@@ -890,6 +926,31 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     return isMyTurn
         ? '내 남은 시간: ${_formatRemainingTurnTime(_remainingTurnMs)}'
         : '상대 남은 시간: ${_formatRemainingTurnTime(_remainingTurnMs)}';
+  }
+
+  String _countdownLabel() {
+    if (_countdownRemainingMs > 3000) return '3';
+    if (_countdownRemainingMs > 2000) return '2';
+    if (_countdownRemainingMs > 1000) return '1';
+    return '시작';
+  }
+
+  String _topRightDisplayText(String phase, String expectedDisplayText) {
+    if (phase == 'waiting_start') {
+      return _countdownLabel();
+    }
+    return expectedDisplayText;
+  }
+
+  Color _topRightDisplayColor(String phase) {
+    if (phase == 'waiting_start') {
+      final countdownText = _countdownLabel();
+      if (countdownText == '시작') {
+        return Colors.green;
+      }
+      return Colors.red;
+    }
+    return Colors.black;
   }
 
   Widget _buildTopGamePanel({
@@ -944,11 +1005,17 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  isMyTurn ? '지금은 당신의 턴입니다.' : '상대 턴입니다.',
+                  phase == 'waiting_start'
+                      ? '곧 게임이 시작됩니다.'
+                      : isMyTurn
+                      ? '지금은 당신의 턴입니다.'
+                      : '상대 턴입니다.',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
-                    color: isMyTurn ? Colors.green : Colors.orange,
+                    color: phase == 'waiting_start'
+                        ? Colors.blue
+                        : (isMyTurn ? Colors.green : Colors.orange),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -985,8 +1052,9 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
             child: FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                expectedDisplayText,
-                style: const TextStyle(
+                _topRightDisplayText(phase, expectedDisplayText),
+                style: TextStyle(
+                  color: _topRightDisplayColor(phase),
                   fontSize: 34,
                   fontWeight: FontWeight.bold,
                 ),
@@ -1001,6 +1069,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   Widget _buildBottomInputPanel({
     required bool canSubmit,
     required bool canSubmitNumber,
+    required bool isCountdownLocked,
     required String typedNumberText,
   }) {
     return Column(
@@ -1008,86 +1077,100 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       mainAxisSize: MainAxisSize.max,
       children: [
         Expanded(
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.grey.shade300),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
-                  height: 48,
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade400),
-                  ),
-                  child: Text(
-                    typedNumberText,
-                    style: TextStyle(
-                      fontSize: _typedNumber.length >= 6 ? 20 : 24,
-                      fontWeight: FontWeight.bold,
-                      color: _typedNumber.isEmpty
-                          ? Colors.grey.shade500
-                          : Colors.black,
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 180),
+            opacity: isCountdownLocked ? 0.55 : 1.0,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isCountdownLocked
+                    ? Colors.grey.shade200
+                    : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: isCountdownLocked
+                      ? Colors.grey.shade400
+                      : Colors.grey.shade300,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    height: 48,
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: isCountdownLocked
+                          ? Colors.grey.shade50
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade400),
+                    ),
+                    child: Text(
+                      isCountdownLocked ? '시작 준비 중' : typedNumberText,
+                      style: TextStyle(
+                        fontSize: _typedNumber.length >= 6 ? 20 : 24,
+                        fontWeight: FontWeight.bold,
+                        color: isCountdownLocked
+                            ? Colors.grey.shade500
+                            : _typedNumber.isEmpty
+                            ? Colors.grey.shade500
+                            : Colors.black,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: Column(
-                    children: [
-                      Expanded(
-                        child: GridView.count(
-                          crossAxisCount: 5,
-                          physics: const NeverScrollableScrollPhysics(),
-                          mainAxisSpacing: 8,
-                          crossAxisSpacing: 8,
-                          childAspectRatio: 1.65,
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: GridView.count(
+                            crossAxisCount: 5,
+                            physics: const NeverScrollableScrollPhysics(),
+                            mainAxisSpacing: 8,
+                            crossAxisSpacing: 8,
+                            childAspectRatio: 1.65,
+                            children: [
+                              _buildNumberPadKey('1', canSubmit),
+                              _buildNumberPadKey('2', canSubmit),
+                              _buildNumberPadKey('3', canSubmit),
+                              _buildNumberPadKey('4', canSubmit),
+                              _buildNumberPadKey('5', canSubmit),
+                              _buildNumberPadKey('6', canSubmit),
+                              _buildNumberPadKey('7', canSubmit),
+                              _buildNumberPadKey('8', canSubmit),
+                              _buildNumberPadKey('9', canSubmit),
+                              _buildNumberPadKey('0', canSubmit),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
                           children: [
-                            _buildNumberPadKey('1', canSubmit),
-                            _buildNumberPadKey('2', canSubmit),
-                            _buildNumberPadKey('3', canSubmit),
-                            _buildNumberPadKey('4', canSubmit),
-                            _buildNumberPadKey('5', canSubmit),
-                            _buildNumberPadKey('6', canSubmit),
-                            _buildNumberPadKey('7', canSubmit),
-                            _buildNumberPadKey('8', canSubmit),
-                            _buildNumberPadKey('9', canSubmit),
-                            _buildNumberPadKey('0', canSubmit),
+                            Expanded(
+                              child: _buildNumberPadButton(
+                                label: '←',
+                                onTap: canSubmit ? _backspaceDigit : null,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: _buildNumberPadButton(
+                                label: '전체삭제',
+                                onTap: canSubmit ? _clearTypedNumber : null,
+                                backgroundColor: Colors.grey.shade300,
+                                foregroundColor: Colors.black87,
+                              ),
+                            ),
                           ],
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildNumberPadButton(
-                              label: '←',
-                              onTap: canSubmit ? _backspaceDigit : null,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildNumberPadButton(
-                              label: '전체삭제',
-                              onTap: canSubmit ? _clearTypedNumber : null,
-                              backgroundColor: Colors.grey.shade300,
-                              foregroundColor: Colors.black87,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -1120,12 +1203,18 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
         mySocketId != null &&
         _lastTurnSocketId != null &&
         _lastTurnSocketId == mySocketId;
+    final previousPhase = gameState?['phase']?.toString();
+    final nextPhase = data?['phase']?.toString() ?? 'waiting_start';
     final isMyTurnNow =
         mySocketId != null &&
         nextTurnSocketId != null &&
         nextTurnSocketId == mySocketId;
 
-    if (!wasMyTurn && isMyTurnNow) {
+    if (previousPhase == 'waiting_start' &&
+        nextPhase == 'playing' &&
+        isMyTurnNow) {
+      AudioService.playTurnStart();
+    } else if (!wasMyTurn && isMyTurnNow && nextPhase == 'playing') {
       AudioService.playTurnStart();
     }
 
@@ -1137,7 +1226,15 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
 
       gameState = data;
       statusMessage = lastActionMessage;
-      if (isMyTurnNow) {
+      if (nextPhase == 'waiting_start') {
+        feedbackMessage = '카운트다운이 끝나면 첫 번째 플레이어부터 시작합니다.';
+      } else if (previousPhase == 'waiting_start' && nextPhase == 'playing') {
+        if (isMyTurnNow) {
+          feedbackMessage = '시작! 지금 당신 차례입니다.';
+        } else {
+          feedbackMessage = '시작! 첫 번째 플레이어의 입력을 기다려주세요.';
+        }
+      } else if (isMyTurnNow) {
         feedbackMessage = '지금 당신 차례입니다. 서둘러 입력해주세요.';
       } else if (wasMyTurn && !isMyTurnNow) {
         feedbackMessage = '입력이 전달되었습니다. 다음 플레이어를 기다려주세요.';
@@ -1318,6 +1415,8 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
         style: ElevatedButton.styleFrom(
           backgroundColor: backgroundColor,
           foregroundColor: foregroundColor,
+          disabledBackgroundColor: Colors.grey.shade300,
+          disabledForegroundColor: Colors.grey.shade500,
           textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
@@ -1359,6 +1458,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     final expectedDisplayText =
         gameState?['metadata']?['expectedDisplayText']?.toString() ?? '-';
     final phase = gameState?['phase']?.toString() ?? 'playing';
+    final isCountdownLocked = phase == 'waiting_start';
     final canSubmit = isMyTurn && phase == 'playing' && !isSubmitting;
     final canSubmitNumber = canSubmit && _typedNumber.isNotEmpty;
     final currentPlayerNickname = _nicknameBySocketId(currentTurnSocketId);
@@ -1407,6 +1507,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                 child: _buildBottomInputPanel(
                   canSubmit: canSubmit,
                   canSubmitNumber: canSubmitNumber,
+                  isCountdownLocked: isCountdownLocked,
                   typedNumberText: typedNumberText,
                 ),
               ),

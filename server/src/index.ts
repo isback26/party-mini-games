@@ -5,7 +5,9 @@ import {
   GameRoom,
   GameType,
   TurnTimeLimitMs,
+  ThreeSixNineDifficulty,
   isAllowedTurnTimeLimitMs,
+  isAllowedThreeSixNineDifficulty,
 } from "./games/types";
 import cors from "cors";
 import { createServer } from "http";
@@ -45,14 +47,17 @@ type GameSubmitEventPayload = {
 type RoomCreateEventPayload = {
   nickname: string;
   turnTimeLimitMs?: TurnTimeLimitMs | null;
+  difficulty?: ThreeSixNineDifficulty;
 };
 
 type RoomUpdateSettingsEventPayload = {
   roomCode: string;
-  turnTimeLimitMs: TurnTimeLimitMs;
+  turnTimeLimitMs?: TurnTimeLimitMs;
+  difficulty?: ThreeSixNineDifficulty;
 };
 
 const TURN_TIMEOUT_CHECK_INTERVAL_MS = 100;
+const GAME_START_COUNTDOWN_MS = 4000;
 
 function buildTimeoutFinishedState(gameState: GameState): GameState {
   return {
@@ -90,6 +95,28 @@ function resetTurnTimer(
   };
 }
 
+function beginPlayingPhase(
+  gameState: GameState,
+  turnTimeLimitMs: number | null
+): GameState {
+  const turnStartedAt = Date.now();
+  const turnDeadlineAt =
+    turnTimeLimitMs != null ? turnStartedAt + turnTimeLimitMs : null;
+
+  return {
+    ...gameState,
+    phase: "playing",
+    turnStartedAt,
+    turnDeadlineAt,
+    metadata: {
+      ...gameState.metadata,
+      countdownStartedAt: null,
+      countdownEndsAt: null,
+      lastActionMessage: "시작! 첫 번째 플레이어가 입력해주세요.",
+    },
+  };
+}
+
 function generateRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let result = "";
@@ -106,6 +133,7 @@ io.on("connection", (socket) => {
     try {
       const nickname = payload?.nickname?.trim();
       const requestedTurnTimeLimitMs = payload?.turnTimeLimitMs ?? null;
+      const requestedDifficulty = payload?.difficulty ?? "normal";
 
       if (!nickname) {
         callback({ ok: false, message: "닉네임을 입력해주세요." });
@@ -123,6 +151,14 @@ io.on("connection", (socket) => {
         return;
       }
 
+      if (!isAllowedThreeSixNineDifficulty(requestedDifficulty)) {
+        callback({
+          ok: false,
+          message: "369 게임 난이도 옵션이 올바르지 않습니다.",
+        });
+        return;
+      }
+
       let code = generateRoomCode();
       while (rooms.has(code)) {
         code = generateRoomCode();
@@ -134,6 +170,7 @@ io.on("connection", (socket) => {
         selectedGame: "three_six_nine",
         settings: {
           turnTimeLimitMs: requestedTurnTimeLimitMs,
+          difficulty: requestedDifficulty,
         },
         status: "waiting",
         players: [
@@ -275,6 +312,7 @@ io.on("connection", (socket) => {
       try {
         const roomCode = payload?.roomCode?.trim().toUpperCase();
         const turnTimeLimitMs = payload?.turnTimeLimitMs;
+        const difficulty = payload?.difficulty;
 
         if (!roomCode) {
           callback({ ok: false, message: "방 코드가 필요합니다." });
@@ -300,7 +338,10 @@ io.on("connection", (socket) => {
           return;
         }
 
-        if (!isAllowedTurnTimeLimitMs(room.selectedGame, turnTimeLimitMs)) {
+        if (
+          turnTimeLimitMs != null &&
+          !isAllowedTurnTimeLimitMs(room.selectedGame, turnTimeLimitMs)
+        ) {
           callback({
             ok: false,
             message: "선택한 게임에서 사용할 수 없는 제한시간입니다.",
@@ -308,7 +349,20 @@ io.on("connection", (socket) => {
           return;
         }
 
-        room.settings.turnTimeLimitMs = turnTimeLimitMs;
+        if (
+          difficulty != null &&
+          room.selectedGame === "three_six_nine" &&
+          !isAllowedThreeSixNineDifficulty(difficulty)
+        ) {
+          callback({
+            ok: false,
+            message: "369 게임에서 사용할 수 없는 난이도입니다.",
+          });
+          return;
+        }
+
+        room.settings.turnTimeLimitMs = turnTimeLimitMs ?? room.settings.turnTimeLimitMs;
+        room.settings.difficulty = difficulty ?? room.settings.difficulty;
 
         callback({
           ok: true,
@@ -366,6 +420,8 @@ io.on("connection", (socket) => {
         callback({
           ok: true,
           gameType: room.selectedGame,
+          countdownMs: GAME_START_COUNTDOWN_MS,
+          difficulty: room.settings.difficulty,
           turnTimeLimitMs: room.settings.turnTimeLimitMs,
           gameState,
         });
@@ -375,6 +431,8 @@ io.on("connection", (socket) => {
         io.to(roomCode).emit("game:started", {
           roomCode: room.code,
           gameType: room.selectedGame,
+          countdownMs: GAME_START_COUNTDOWN_MS,
+          difficulty: room.settings.difficulty,
           turnTimeLimitMs: room.settings.turnTimeLimitMs,
           gameState,
         });
@@ -541,6 +599,28 @@ setInterval(() => {
     if (!gameState) {
       continue;
     }
+
+    if (gameState.phase === "waiting_start") {
+      const countdownEndsAt =
+        typeof gameState.metadata?.countdownEndsAt === "number"
+          ? gameState.metadata.countdownEndsAt
+          : null;
+
+      if (countdownEndsAt == null) {
+        continue;
+      }
+
+      if (now >= countdownEndsAt) {
+        const playingState = beginPlayingPhase(
+          gameState,
+          room.settings.turnTimeLimitMs
+        );
+        roomGameStates.set(roomCode, playingState);
+        io.to(roomCode).emit("game:state", playingState);
+      }
+      continue;
+    }
+
     if (gameState.phase !== "playing" || gameState.turnDeadlineAt == null) {
       continue;
     }
