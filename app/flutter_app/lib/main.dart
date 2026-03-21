@@ -92,72 +92,76 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('파티 미니게임'), centerTitle: true),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-            const Text(
-              '모임에서 바로 즐기는 실시간 미니게임',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              connectionText,
-              style: TextStyle(
-                fontSize: 14,
-                color: socketService.isConnected ? Colors.green : Colors.red,
-                fontWeight: FontWeight.w600,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              const SizedBox(height: 20),
+              const Text(
+                '모임에서 바로 즐기는 실시간 미니게임',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
               ),
-            ),
-            const SizedBox(height: 30),
-            TextField(
-              controller: nicknameController,
-              decoration: InputDecoration(
-                labelText: '닉네임 입력',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+              const SizedBox(height: 12),
+              Text(
+                connectionText,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: socketService.isConnected ? Colors.green : Colors.red,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ),
-            const SizedBox(height: 30),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '지원 예정 게임',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              const SizedBox(height: 24),
+              TextField(
+                controller: nicknameController,
+                decoration: InputDecoration(
+                  labelText: '닉네임 입력',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: ListView.separated(
-                itemCount: games.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  return Card(
-                    child: ListTile(
-                      title: Text(games[index]),
-                      trailing: const Icon(Icons.arrow_forward_ios),
-                      onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('${games[index]} 준비 중')),
-                        );
-                      },
-                    ),
-                  );
-                },
+              const SizedBox(height: 24),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '지원 예정 게임',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
               ),
-            ),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton(
-                onPressed: onLobbyEnterPressed,
-                child: const Text('로비 입장'),
+              const SizedBox(height: 12),
+              Expanded(
+                child: ListView.separated(
+                  itemCount: games.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    return Card(
+                      child: ListTile(
+                        dense: true,
+                        title: Text(games[index]),
+                        trailing: const Icon(Icons.arrow_forward_ios),
+                        onTap: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('${games[index]} 준비 중')),
+                          );
+                        },
+                      ),
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: onLobbyEnterPressed,
+                  child: const Text('로비 입장'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -489,13 +493,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
       appBar: AppBar(title: const Text('게임 로비'), centerTitle: true),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Card(
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(14),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -553,7 +557,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 Card(
                   color: Colors.blue.shade50,
                   child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -581,13 +585,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Text(
-                          '선택된 게임: $currentGameLabel',
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
                         const SizedBox(height: 8),
                         if (players.isEmpty)
                           const Text('아직 참가자가 없습니다.')
@@ -598,14 +595,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
                             final playerIsHost =
                                 player['socketId']?.toString() == hostSocketId;
 
-                            return ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              leading: const Icon(Icons.person),
-                              title: Text(nickname),
-                              subtitle: Text(playerIsHost ? '방장' : '참가자'),
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.person, size: 18),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      nickname,
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                  ),
+                                  Text(
+                                    playerIsHost ? '방장' : '참가자',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey.shade700,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             );
                           }),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 12),
                         const Text(
                           '게임 선택',
                           style: TextStyle(
@@ -614,21 +628,33 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
+                        Row(
                           children: gameLabels.entries.map((entry) {
                             final isSelected = selectedGame == entry.key;
-                            return ChoiceChip(
-                              label: Text(entry.value),
-                              selected: isSelected,
-                              onSelected: (!isHost || roomStatus == 'playing')
-                                  ? null
-                                  : (_) => _selectGame(entry.key),
+                            return Expanded(
+                              child: Padding(
+                                padding: EdgeInsets.only(
+                                  right: entry.key == 'beondegi' ? 0 : 8,
+                                ),
+                                child: ChoiceChip(
+                                  label: SizedBox(
+                                    width: double.infinity,
+                                    child: Text(
+                                      entry.value,
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                  selected: isSelected,
+                                  onSelected:
+                                      (!isHost || roomStatus == 'playing')
+                                      ? null
+                                      : (_) => _selectGame(entry.key),
+                                ),
+                              ),
                             );
                           }).toList(),
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 14),
                         const Text(
                           '턴 제한시간',
                           style: TextStyle(
@@ -687,7 +713,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           style: const TextStyle(fontSize: 13),
                         ),
                         if (startedGameLabel != null) ...[
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 12),
                           Container(
                             width: double.infinity,
                             padding: const EdgeInsets.all(12),
@@ -872,108 +898,103 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     required String expectedDisplayText,
     required dynamic currentPlayerNickname,
   }) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.blue.shade50,
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.06),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              ),
-            ],
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
                   children: [
-                    Row(
-                      children: [
-                        const Text(
-                          '현재 턴: ',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            '${currentPlayerNickname ?? '-'}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  const SizedBox(height: 8),
-                    Text(
-                      isMyTurn ? '지금은 당신의 턴입니다.' : '상대 턴입니다.',
+                    const Text(
+                      '현재 턴: ',
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: 16,
                         fontWeight: FontWeight.w700,
-                        color: isMyTurn ? Colors.green : Colors.orange,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _turnTimerLabel(isMyTurn, phase),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: _turnBarColor(),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(999),
-                      child: LinearProgressIndicator(
-                        value: _turnTimeProgress,
-                        minHeight: 10,
-                        backgroundColor: Colors.grey.shade300,
-                        valueColor: AlwaysStoppedAnimation<Color>(_turnBarColor()),
+                    Expanded(
+                      child: Text(
+                        '${currentPlayerNickname ?? '-'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],
                 ),
-              ),
-            const SizedBox(width: 12),
-              Container(
-                width: 92,
-                height: 92,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                alignment: Alignment.center,
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    expectedDisplayText,
-                    style: const TextStyle(
-                      fontSize: 34,
-                      fontWeight: FontWeight.bold,
-                    ),
+                const SizedBox(height: 8),
+                Text(
+                  isMyTurn ? '지금은 당신의 턴입니다.' : '상대 턴입니다.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: isMyTurn ? Colors.green : Colors.orange,
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 8),
+                Text(
+                  _turnTimerLabel(isMyTurn, phase),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _turnBarColor(),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: _turnTimeProgress,
+                    minHeight: 10,
+                    backgroundColor: Colors.grey.shade300,
+                    valueColor: AlwaysStoppedAnimation<Color>(_turnBarColor()),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
+          const SizedBox(width: 12),
+          Container(
+            width: 84,
+            height: 84,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            alignment: Alignment.center,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                expectedDisplayText,
+                style: const TextStyle(
+                  fontSize: 34,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -984,11 +1005,12 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.max,
       children: [
         Expanded(
           child: Container(
-          width: double.infinity,
-            padding: const EdgeInsets.all(14),
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.grey.shade100,
               borderRadius: BorderRadius.circular(18),
@@ -998,9 +1020,9 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Container(
-                  height: 54,
+                  height: 48,
                   alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
@@ -1009,7 +1031,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                   child: Text(
                     typedNumberText,
                     style: TextStyle(
-                      fontSize: _typedNumber.length >= 6 ? 22 : 28,
+                      fontSize: _typedNumber.length >= 6 ? 20 : 24,
                       fontWeight: FontWeight.bold,
                       color: _typedNumber.isEmpty
                           ? Colors.grey.shade500
@@ -1017,34 +1039,50 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Expanded(
-                  child: GridView.count(
-                    crossAxisCount: 3,
-                    physics: const NeverScrollableScrollPhysics(),
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
-                    childAspectRatio: 1.3,
+                  child: Column(
                     children: [
-                      _buildNumberPadKey('1', canSubmit),
-                      _buildNumberPadKey('2', canSubmit),
-                      _buildNumberPadKey('3', canSubmit),
-                      _buildNumberPadKey('4', canSubmit),
-                      _buildNumberPadKey('5', canSubmit),
-                      _buildNumberPadKey('6', canSubmit),
-                      _buildNumberPadKey('7', canSubmit),
-                      _buildNumberPadKey('8', canSubmit),
-                      _buildNumberPadKey('9', canSubmit),
-                      _buildNumberPadButton(
-                        label: '←',
-                        onTap: canSubmit ? _backspaceDigit : null,
+                      Expanded(
+                        child: GridView.count(
+                          crossAxisCount: 5,
+                          physics: const NeverScrollableScrollPhysics(),
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                          childAspectRatio: 1.65,
+                          children: [
+                            _buildNumberPadKey('1', canSubmit),
+                            _buildNumberPadKey('2', canSubmit),
+                            _buildNumberPadKey('3', canSubmit),
+                            _buildNumberPadKey('4', canSubmit),
+                            _buildNumberPadKey('5', canSubmit),
+                            _buildNumberPadKey('6', canSubmit),
+                            _buildNumberPadKey('7', canSubmit),
+                            _buildNumberPadKey('8', canSubmit),
+                            _buildNumberPadKey('9', canSubmit),
+                            _buildNumberPadKey('0', canSubmit),
+                          ],
+                        ),
                       ),
-                      _buildNumberPadKey('0', canSubmit),
-                      _buildNumberPadButton(
-                        label: '전체삭제',
-                        onTap: canSubmit ? _clearTypedNumber : null,
-                        backgroundColor: Colors.grey.shade300,
-                        foregroundColor: Colors.black87,
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildNumberPadButton(
+                              label: '←',
+                              onTap: canSubmit ? _backspaceDigit : null,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildNumberPadButton(
+                              label: '전체삭제',
+                              onTap: canSubmit ? _clearTypedNumber : null,
+                              backgroundColor: Colors.grey.shade300,
+                              foregroundColor: Colors.black87,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -1142,7 +1180,8 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
           content: Text(statusMessage),
           actions: [
             TextButton(
-              Navigator.of(dialogContext).pop();
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
                 if (mounted && Navigator.of(context).canPop()) {
                   Navigator.of(context).pop();
                 }
@@ -1279,7 +1318,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
         style: ElevatedButton.styleFrom(
           backgroundColor: backgroundColor,
           foregroundColor: foregroundColor,
-          textStyle: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -1336,18 +1375,35 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
           padding: const EdgeInsets.all(12),
           child: Column(
             children: [
-              Expanded(
-                flex: 3,
-                child: _buildTopGamePanel(
-                  isMyTurn: isMyTurn,
-                  phase: phase,
-                  expectedDisplayText: expectedDisplayText,
-                  currentPlayerNickname: currentPlayerNickname,
+              _buildTopGamePanel(
+                isMyTurn: isMyTurn,
+                phase: phase,
+                expectedDisplayText: expectedDisplayText,
+                currentPlayerNickname: currentPlayerNickname,
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Text(
+                  feedbackMessage,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(height: 10),
               Expanded(
-                flex: 7,
                 child: _buildBottomInputPanel(
                   canSubmit: canSubmit,
                   canSubmitNumber: canSubmitNumber,
