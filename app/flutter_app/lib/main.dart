@@ -197,10 +197,17 @@ class _LobbyScreenState extends State<LobbyScreen> {
     'beondegi': [500, 1000, 3000, 5000],
   };
 
+  static const Map<String, String> threeSixNineDifficultyLabels = {
+    'easy': '쉬움',
+    'normal': '보통',
+    'hard': '어려움',
+  };
+
   String? currentRoomCode;
   List<dynamic> players = [];
   String? hostSocketId;
   String selectedGame = 'three_six_nine';
+  String selectedDifficulty = 'easy';
   int? selectedTurnTimeLimitMs = 3000;
   String roomStatus = 'waiting';
   bool isLoading = false;
@@ -234,12 +241,15 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final nextSelectedGame = data['selectedGame']?.toString() ?? selectedGame;
     final nextRoomStatus = data['status']?.toString() ?? 'waiting';
     final nextTurnTimeLimitMs = data['settings']?['turnTimeLimitMs'] as int?;
+    final nextDifficulty =
+        data['settings']?['difficulty']?.toString() ?? selectedDifficulty;
 
     setState(() {
       currentRoomCode = roomCode;
       players = nextPlayers;
       hostSocketId = nextHostSocketId;
       selectedGame = nextSelectedGame;
+      selectedDifficulty = nextDifficulty;
       selectedTurnTimeLimitMs = nextTurnTimeLimitMs;
       roomStatus = nextRoomStatus;
       isLoading = false;
@@ -285,7 +295,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     widget.socketService.emitWithAck(
       'room:create',
-      {'nickname': widget.nickname, 'turnTimeLimitMs': selectedTurnTimeLimitMs},
+      {
+        'nickname': widget.nickname,
+        'turnTimeLimitMs': selectedTurnTimeLimitMs,
+        'difficulty': selectedDifficulty,
+      },
       (response) {
         if (!mounted) return;
 
@@ -309,6 +323,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
           selectedGame = room?['selectedGame']?.toString() ?? selectedGame;
           selectedTurnTimeLimitMs =
               room?['settings']?['turnTimeLimitMs'] as int?;
+          selectedDifficulty =
+              room?['settings']?['difficulty']?.toString() ??
+              selectedDifficulty;
           isLoading = false;
           statusMessage = '방이 생성되었습니다.';
         });
@@ -356,6 +373,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
           selectedGame = room?['selectedGame']?.toString() ?? selectedGame;
           selectedTurnTimeLimitMs =
               room?['settings']?['turnTimeLimitMs'] as int?;
+          selectedDifficulty =
+              room?['settings']?['difficulty']?.toString() ??
+              selectedDifficulty;
           players = (room?['players'] as List?) ?? [];
           isLoading = false;
           statusMessage = '방에 참가했습니다.';
@@ -392,6 +412,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
         setState(() {
           selectedGame = response['selectedGame']?.toString() ?? gameType;
           final room = response['room'] as Map<String, dynamic>?;
+          selectedDifficulty =
+              room?['settings']?['difficulty']?.toString() ??
+              selectedDifficulty;
+          selectedDifficulty = gameType == 'three_six_nine'
+              ? (room?['settings']?['difficulty']?.toString() ??
+                    selectedDifficulty)
+              : 'easy';
           selectedTurnTimeLimitMs =
               room?['settings']?['turnTimeLimitMs'] as int?;
           isLoading = false;
@@ -411,7 +438,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     widget.socketService.emitWithAck(
       'room:update_settings',
-      {'roomCode': currentRoomCode, 'turnTimeLimitMs': turnTimeLimitMs},
+      {
+        'roomCode': currentRoomCode,
+        'turnTimeLimitMs': turnTimeLimitMs,
+        'difficulty': selectedDifficulty,
+      },
       (response) {
         if (!mounted) return;
 
@@ -432,6 +463,44 @@ class _LobbyScreenState extends State<LobbyScreen> {
               room?['settings']?['turnTimeLimitMs'] as int?;
           isLoading = false;
           statusMessage = '제한시간이 변경되었습니다.';
+        });
+      },
+    );
+  }
+
+  Future<void> _updateThreeSixNineDifficulty(String difficulty) async {
+    if (currentRoomCode == null || isLoading) return;
+
+    setState(() {
+      isLoading = true;
+      statusMessage = '난이도를 변경하는 중...';
+    });
+
+    widget.socketService.emitWithAck(
+      'room:update_settings',
+      {
+        'roomCode': currentRoomCode,
+        'turnTimeLimitMs': selectedTurnTimeLimitMs,
+        'difficulty': difficulty,
+      },
+      (response) {
+        if (!mounted) return;
+
+        final ok = response != null && response['ok'] == true;
+
+        if (!ok) {
+          setState(() {
+            isLoading = false;
+            statusMessage =
+                response?['message']?.toString() ?? '난이도 변경에 실패했습니다.';
+          });
+          return;
+        }
+
+        setState(() {
+          selectedDifficulty = difficulty;
+          isLoading = false;
+          statusMessage = '난이도가 변경되었습니다.';
         });
       },
     );
@@ -653,6 +722,36 @@ class _LobbyScreenState extends State<LobbyScreen> {
                             );
                           }).toList(),
                         ),
+                        if (selectedGame == 'three_six_nine') ...[
+                          const SizedBox(height: 14),
+                          const Text(
+                            '369 난이도',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: threeSixNineDifficultyLabels.entries.map((
+                              entry,
+                            ) {
+                              final isSelected =
+                                  selectedDifficulty == entry.key;
+                              return ChoiceChip(
+                                label: Text(entry.value),
+                                selected: isSelected,
+                                onSelected: (!isHost || roomStatus == 'playing')
+                                    ? null
+                                    : (_) => _updateThreeSixNineDifficulty(
+                                        entry.key,
+                                      ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
                         const SizedBox(height: 14),
                         const Text(
                           '턴 제한시간',
@@ -683,6 +782,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
                               : '현재 제한시간: ${_turnTimeLabel(selectedTurnTimeLimitMs!)}',
                           style: const TextStyle(fontSize: 13),
                         ),
+                        if (selectedGame == 'three_six_nine') ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            '현재 난이도: ${threeSixNineDifficultyLabels[selectedDifficulty] ?? selectedDifficulty}',
+                          ),
+                        ],
                         const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
@@ -1175,20 +1280,38 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
           ),
         ),
         const SizedBox(height: 10),
-        SizedBox(
-          height: 52,
-          child: ElevatedButton(
-            onPressed: canSubmitNumber ? _submitNumber : null,
-            child: const Text('숫자 제출'),
-          ),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 52,
-          child: ElevatedButton(
-            onPressed: canSubmit ? _submitClap : null,
-            child: const Text('박수 입력 👏'),
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: canSubmit ? _submitNumber : null,
+                  child: const Text('숫자 제출'),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: canSubmit ? _showClapCountSheet : null,
+                  child: const Text('박수 입력 👏'),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: canSubmit ? _submitManse : null,
+                  child: const Text('만세 입력 🙌'),
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -1434,16 +1557,76 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     );
   }
 
-  Future<void> _submitClap() async {
+  Future<void> _submitClapCount(int clapCount) async {
+    final clapText = '👏' * clapCount;
+
     await _submitGameInput(
       moveType: 'clap',
-      text: '👏',
+      text: clapText,
       failureMessage: '박수 제출에 실패했습니다.',
       onSuccess: () {
         setState(() {
-          feedbackMessage = '짝! 박수 입력 성공!';
+          feedbackMessage = '박수 $clapCount번 입력 성공!';
         });
         AudioService.playClap();
+      },
+    );
+  }
+
+  Future<void> _showClapCountSheet() async {
+    if (isSubmitting) return;
+
+    final selectedCount = await showModalBottomSheet<int>(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '박수 횟수 선택',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 14),
+                for (final count in [1, 2, 3]) ...[
+                  SizedBox(
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.pop(sheetContext, count);
+                      },
+                      child: Text('박수 ${'👏' * count} ($count번)'),
+                    ),
+                  ),
+                  if (count != 3) const SizedBox(height: 8),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selectedCount == null || !mounted) {
+      return;
+    }
+
+    await _submitClapCount(selectedCount);
+  }
+
+  Future<void> _submitManse() async {
+    await _submitGameInput(
+      moveType: 'manse',
+      text: '🙌',
+      failureMessage: '만세 제출에 실패했습니다.',
+      onSuccess: () {
+        setState(() {
+          feedbackMessage = '만세 입력 성공!';
+        });
       },
     );
   }

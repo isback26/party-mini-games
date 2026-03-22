@@ -4,14 +4,15 @@ import {
   GameState,
   GameSubmitPayload,
   GameSubmitResult,
+  ThreeSixNineDifficulty,
+  ThreeSixNineMoveType,
 } from "../types";
-
-type ThreeSixNineMoveType = "number" | "clap";
 
 type ThreeSixNineMetadata = {
   introMessage: string;
   countdownStartedAt: number | null;
   countdownEndsAt: number | null;
+  difficulty: ThreeSixNineDifficulty;
   expectedNumber: number;
   clapNumbers: number[];
   expectedMoveType: ThreeSixNineMoveType;
@@ -25,8 +26,9 @@ export class ThreeSixNineEngine implements GameEngine {
   readonly gameType = "three_six_nine" as const;
 
   createInitialState(room: GameRoom): GameState<ThreeSixNineMetadata> {
+    const difficulty = this.normalizeDifficulty(room.settings.difficulty);
     const expectedNumber = 1;
-    const expectedMove = this.getExpectedMove(expectedNumber);
+    const expectedMove = this.getExpectedMove(expectedNumber, difficulty);
     const countdownStartedAt = Date.now();
     const countdownEndsAt = countdownStartedAt + 4000;
 
@@ -42,6 +44,7 @@ export class ThreeSixNineEngine implements GameEngine {
         introMessage: "삼육구, 삼육구",
         countdownStartedAt,
         countdownEndsAt,
+        difficulty,
         expectedNumber,
         clapNumbers: [3, 6, 9],
         expectedMoveType: expectedMove.moveType,
@@ -57,15 +60,19 @@ submitTurn(
     payload: GameSubmitPayload
   ): GameSubmitResult {
     const metadata = this.normalizeMetadata(gameState.metadata);
+    const difficulty = metadata.difficulty;
     const expectedNumber = Number(metadata.expectedNumber ?? 1);
-    const expectedMove = this.getExpectedMove(expectedNumber);
+    const expectedMove = this.getExpectedMove(expectedNumber, difficulty);
     const currentPlayer =
       room.players.find((player) => player.socketId === payload.playerSocketId)?.nickname ??
       "알 수 없음";
 
     const isCorrect =
       expectedMove.moveType === "clap"
-        ? payload.moveType === "clap"
+        ? payload.moveType === "clap" &&
+          this.countSubmittedClaps(payload.text) === expectedMove.clapCount
+        : expectedMove.moveType === "manse"
+          ? payload.moveType === "manse"
         : payload.moveType === "number" && Number(payload.value) === expectedNumber;
 
     if (!isCorrect) {
@@ -78,6 +85,7 @@ submitTurn(
           phase: "finished",
           metadata: {
             ...metadata,
+            difficulty,
             expectedNumber,
             expectedMoveType: expectedMove.moveType,
             expectedDisplayText: expectedMove.displayText,
@@ -90,7 +98,7 @@ submitTurn(
     }
 
     const nextExpectedNumber = expectedNumber + 1;
-    const nextExpectedMove = this.getExpectedMove(nextExpectedNumber);
+    const nextExpectedMove = this.getExpectedMove(nextExpectedNumber, difficulty);
     const nextTurnSocketId = this.getNextPlayerSocketId(room, payload.playerSocketId);
     const nextTurnStartedAt = Date.now();
     const nextTurnDeadlineAt =
@@ -104,6 +112,8 @@ submitTurn(
       message:
         expectedMove.moveType === "clap"
           ? `${currentPlayer} 님이 ${expectedMove.displayText} 입력 성공`
+          : expectedMove.moveType === "manse"
+            ? `${currentPlayer} 님이 만세 입력 성공`
           : `${currentPlayer} 님이 ${expectedNumber} 입력 성공`,
       gameState: {
         ...gameState,
@@ -113,12 +123,15 @@ submitTurn(
         currentTurnSocketId: nextTurnSocketId,
         metadata: {
           ...metadata,
+          difficulty,
           expectedNumber: nextExpectedNumber,
           expectedMoveType: nextExpectedMove.moveType,
           expectedDisplayText: nextExpectedMove.displayText,
           lastActionMessage:
             expectedMove.moveType === "clap"
               ? `${currentPlayer} 님이 ${expectedMove.displayText} 입력 성공`
+              : expectedMove.moveType === "manse"
+                ? `${currentPlayer} 님이 만세 입력 성공`
               : `${currentPlayer} 님이 ${expectedNumber} 입력 성공`,
         },
       },
@@ -129,7 +142,8 @@ submitTurn(
     metadata: Record<string, unknown>
   ): ThreeSixNineMetadata {
     const expectedNumber = Number(metadata.expectedNumber ?? 1);
-    const expectedMove = this.getExpectedMove(expectedNumber);
+    const difficulty = this.normalizeDifficulty(metadata.difficulty);
+    const expectedMove = this.getExpectedMove(expectedNumber, difficulty);
 
     return {
       introMessage:
@@ -138,12 +152,15 @@ submitTurn(
         typeof metadata.countdownStartedAt === "number" ? metadata.countdownStartedAt : null,
       countdownEndsAt:
         typeof metadata.countdownEndsAt === "number" ? metadata.countdownEndsAt : null,
+      difficulty,
       expectedNumber,
       clapNumbers: Array.isArray(metadata.clapNumbers)
         ? (metadata.clapNumbers as number[])
         : [3, 6, 9],
       expectedMoveType:
-        metadata.expectedMoveType === "number" || metadata.expectedMoveType === "clap"
+        metadata.expectedMoveType === "number" ||
+        metadata.expectedMoveType === "clap" ||
+        metadata.expectedMoveType === "manse"
           ? metadata.expectedMoveType
           : expectedMove.moveType,
       expectedDisplayText:
@@ -188,21 +205,59 @@ submitTurn(
       .filter((digit) => digit === "3" || digit === "6" || digit === "9").length;
   }
 
+  private countSubmittedClaps(text?: string): number {
+    if (typeof text !== "string" || text.trim().length === 0) {
+      return 1;
+    }
+
+    const clapCount = [...text].filter((char) => char === "👏").length;
+
+    return clapCount > 0 ? clapCount : 1;
+  }
+
+  private normalizeDifficulty(value: unknown): ThreeSixNineDifficulty {
+    if (value === "normal" || value === "hard") {
+      return value;
+    }
+    return "easy";
+  }
+
   private getExpectedMove(
-    num: number
-  ): { moveType: ThreeSixNineMoveType; displayText: string } {
+    num: number,
+    difficulty: ThreeSixNineDifficulty
+  ): { moveType: ThreeSixNineMoveType; displayText: string; clapCount: number } {
+    if (difficulty === "normal" || difficulty === "hard") {
+      if (num % 10 === 0) {
+        return {
+          moveType: "manse",
+          displayText: "만세",
+          clapCount: 0,
+        };
+      }
+    }
+
     const clapCount = this.countClaps(num);
 
     if (clapCount > 0) {
       return {
         moveType: "clap",
         displayText: "👏".repeat(clapCount),
+        clapCount,
+      };
+    }
+
+    if (difficulty === "hard" && num % 3 === 0) {
+      return {
+        moveType: "clap",
+        displayText: "👏",
+        clapCount: 1,
       };
     }
 
     return {
       moveType: "number",
       displayText: String(num),
+      clapCount: 0,
     };
   }
 }

@@ -133,7 +133,7 @@ io.on("connection", (socket) => {
     try {
       const nickname = payload?.nickname?.trim();
       const requestedTurnTimeLimitMs = payload?.turnTimeLimitMs ?? null;
-      const requestedDifficulty = payload?.difficulty ?? "normal";
+      const requestedDifficulty = payload?.difficulty ?? "easy";
 
       if (!nickname) {
         callback({ ok: false, message: "닉네임을 입력해주세요." });
@@ -333,7 +333,7 @@ io.on("connection", (socket) => {
         if (room.status !== "waiting") {
           callback({
             ok: false,
-            message: "게임 진행 중에는 제한시간을 변경할 수 없습니다.",
+            message: "게임 진행 중에는 설정을 변경할 수 없습니다.",
           });
           return;
         }
@@ -648,6 +648,6 @@ setInterval(() => {
 
 const PORT = 3000;
 
-httpServer.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`);
+httpServer.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server listening on http://0.0.0.0:${PORT}`);
 });

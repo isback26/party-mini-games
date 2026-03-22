@@ -1,6 +1,8 @@
 export type GameType = "three_six_nine" | "nunchi" | "beondegi";
 export type ThreeSixNineDifficulty = "easy" | "normal" | "hard";
 
+export type ThreeSixNineMoveType = "number" | "clap" | "manse";
+
 export type TurnTimeLimitMs = 500 | 1000 | 3000 | 5000 | 10000;
 
 export const TURN_TIME_LIMIT_OPTIONS_BY_GAME: Record<

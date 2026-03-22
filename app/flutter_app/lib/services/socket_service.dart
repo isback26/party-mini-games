@@ -17,10 +17,13 @@ class SocketService {
     if (_socket != null && _socket!.connected) return;
 
     _socket = io.io(
-      'http://localhost:3000',
+      'http://192.168.45.170:3000',
       io.OptionBuilder()
-          .setTransports(['websocket'])
+          .setTransports(['websocket', 'polling'])
           .disableAutoConnect()
+          .enableForceNew()
+          .enableReconnection()
+          .setTimeout(10000)
           .build(),
     );
 
@@ -35,12 +38,12 @@ class SocketService {
     });
 
     _socket!.onConnectError((data) {
-      log('⚠️ Connect error: $data');
+      log('⚠️ Connect error: ${data.toString()}');
       onConnectError?.call(data);
     });
 
     _socket!.onError((data) {
-      log('⚠️ Socket error: $data');
+      log('⚠️ Socket error: ${data.toString()}');
     });
 
     _socket!.connect();
