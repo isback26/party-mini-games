@@ -878,6 +878,7 @@ class ThreeSixNineGameScreen extends StatefulWidget {
 class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   dynamic gameState;
   String _typedNumber = '';
+  int _pendingClapCount = 0;
   String statusMessage = '369 게임 준비 중입니다.';
   String feedbackMessage = '시작 구호가 끝나면 입력이 시작됩니다.';
   bool isSubmitting = false;
@@ -1040,11 +1041,11 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     return '시작';
   }
 
-  String _topRightDisplayText(String phase, String expectedDisplayText) {
+  String _topRightDisplayText(String phase, String lastSubmittedDisplayText) {
     if (phase == 'waiting_start') {
       return _countdownLabel();
     }
-    return expectedDisplayText;
+    return lastSubmittedDisplayText;
   }
 
   Color _topRightDisplayColor(String phase) {
@@ -1061,7 +1062,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   Widget _buildTopGamePanel({
     required bool isMyTurn,
     required String phase,
-    required String expectedDisplayText,
+    required String lastSubmittedDisplayText,
     required dynamic currentPlayerNickname,
   }) {
     return Container(
@@ -1157,7 +1158,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
             child: FittedBox(
               fit: BoxFit.scaleDown,
               child: Text(
-                _topRightDisplayText(phase, expectedDisplayText),
+                _topRightDisplayText(phase, lastSubmittedDisplayText),
                 style: TextStyle(
                   color: _topRightDisplayColor(phase),
                   fontSize: 34,
@@ -1176,6 +1177,9 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     required bool canSubmitNumber,
     required bool isCountdownLocked,
     required String typedNumberText,
+    required bool canUseNumberPad,
+    required bool canUseClapButton,
+    required String clapButtonLabel,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1238,16 +1242,16 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                             crossAxisSpacing: 8,
                             childAspectRatio: 1.65,
                             children: [
-                              _buildNumberPadKey('1', canSubmit),
-                              _buildNumberPadKey('2', canSubmit),
-                              _buildNumberPadKey('3', canSubmit),
-                              _buildNumberPadKey('4', canSubmit),
-                              _buildNumberPadKey('5', canSubmit),
-                              _buildNumberPadKey('6', canSubmit),
-                              _buildNumberPadKey('7', canSubmit),
-                              _buildNumberPadKey('8', canSubmit),
-                              _buildNumberPadKey('9', canSubmit),
-                              _buildNumberPadKey('0', canSubmit),
+                              _buildNumberPadKey('1', canUseNumberPad),
+                              _buildNumberPadKey('2', canUseNumberPad),
+                              _buildNumberPadKey('3', canUseNumberPad),
+                              _buildNumberPadKey('4', canUseNumberPad),
+                              _buildNumberPadKey('5', canUseNumberPad),
+                              _buildNumberPadKey('6', canUseNumberPad),
+                              _buildNumberPadKey('7', canUseNumberPad),
+                              _buildNumberPadKey('8', canUseNumberPad),
+                              _buildNumberPadKey('9', canUseNumberPad),
+                              _buildNumberPadKey('0', canUseNumberPad),
                             ],
                           ),
                         ),
@@ -1257,14 +1261,16 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                             Expanded(
                               child: _buildNumberPadButton(
                                 label: '←',
-                                onTap: canSubmit ? _backspaceDigit : null,
+                                onTap: canUseNumberPad ? _backspaceDigit : null,
                               ),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: _buildNumberPadButton(
                                 label: '전체삭제',
-                                onTap: canSubmit ? _clearTypedNumber : null,
+                                onTap: canUseNumberPad
+                                    ? _clearTypedNumber
+                                    : null,
                                 backgroundColor: Colors.grey.shade300,
                                 foregroundColor: Colors.black87,
                               ),
@@ -1286,18 +1292,8 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
               child: SizedBox(
                 height: 52,
                 child: ElevatedButton(
-                  onPressed: canSubmit ? _submitNumber : null,
-                  child: const Text('숫자 제출'),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: SizedBox(
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: canSubmit ? _showClapCountSheet : null,
-                  child: const Text('박수 입력 👏'),
+                  onPressed: canUseClapButton ? _handleClapTap : null,
+                  child: Text(clapButtonLabel),
                 ),
               ),
             ),
@@ -1365,6 +1361,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
         feedbackMessage = lastActionMessage;
       }
 
+      _pendingClapCount = 0;
       isSubmitting = false;
     });
 
@@ -1383,6 +1380,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     setState(() {
       _turnTimer?.cancel();
       gameState = data?['gameState'];
+      _pendingClapCount = 0;
       statusMessage = data?['message']?.toString() ?? '게임이 종료되었습니다.';
       feedbackMessage = '게임 종료! 결과를 확인해주세요.';
       isSubmitting = false;
@@ -1471,17 +1469,53 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     );
   }
 
+  Future<void> _submitParsedNumber(int value) async {
+    await _submitGameInput(
+      moveType: 'number',
+      value: value,
+      failureMessage: '숫자 제출에 실패했습니다.',
+      onSuccess: () {
+        _typedNumber = '';
+        setState(() {
+          feedbackMessage = '숫자 입력 성공!';
+        });
+        AudioService.playThreeSixNineCue(value);
+      },
+    );
+  }
+
+  int _expectedNumberDigitLength() {
+    final expectedNumber = gameState?['metadata']?['expectedNumber'] as int?;
+    if (expectedNumber == null) {
+      return 1;
+    }
+    return expectedNumber.toString().length;
+  }
+
+  bool _isNumberTurn() {
+    final expectedMoveType =
+        gameState?['metadata']?['expectedMoveType']?.toString() ?? '';
+    return expectedMoveType == 'number';
+  }
+
   void _appendDigit(String digit) {
     if (isSubmitting) return;
     if (!RegExp(r'^\d$').hasMatch(digit)) return;
+    if (!_isNumberTurn()) return;
+
+    final expectedDigits = _expectedNumberDigitLength();
+    final nextTyped = _typedNumber == '0' ? digit : '$_typedNumber$digit';
 
     setState(() {
-      if (_typedNumber == '0') {
-        _typedNumber = digit;
-      } else {
-        _typedNumber += digit;
-      }
+      _typedNumber = nextTyped;
     });
+
+    if (nextTyped.length == expectedDigits) {
+      final value = int.tryParse(nextTyped);
+      if (value != null) {
+        _submitParsedNumber(value);
+      }
+    }
   }
 
   void _backspaceDigit() {
@@ -1500,28 +1534,20 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     });
   }
 
-  Future<void> _submitNumber() async {
-    final value = int.tryParse(_typedNumber.trim());
+  bool _isClapTurn() {
+    final expectedMoveType =
+        gameState?['metadata']?['expectedMoveType']?.toString() ?? '';
+    return expectedMoveType == 'clap';
+  }
 
-    if (value == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('숫자를 정확히 입력해주세요.')));
-      return;
-    }
-
-    await _submitGameInput(
-      moveType: 'number',
-      value: value,
-      failureMessage: '숫자 제출에 실패했습니다.',
-      onSuccess: () {
-        _typedNumber = '';
-        setState(() {
-          feedbackMessage = '숫자 입력 성공!';
-        });
-        AudioService.playThreeSixNineCue(value);
-      },
-    );
+  int _expectedClapCount() {
+    final expectedDisplayText =
+        gameState?['metadata']?['expectedDisplayText']?.toString() ?? '';
+    final clapCount = expectedDisplayText
+        .split('')
+        .where((char) => char == '👏')
+        .length;
+    return clapCount > 0 ? clapCount : 1;
   }
 
   Widget _buildNumberPadButton({
@@ -1573,49 +1599,23 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     );
   }
 
-  Future<void> _showClapCountSheet() async {
+  Future<void> _handleClapTap() async {
     if (isSubmitting) return;
+    if (!_isClapTurn()) return;
 
-    final selectedCount = await showModalBottomSheet<int>(
-      context: context,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  '박수 횟수 선택',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 14),
-                for (final count in [1, 2, 3]) ...[
-                  SizedBox(
-                    height: 52,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(sheetContext, count);
-                      },
-                      child: Text('박수 ${'👏' * count} ($count번)'),
-                    ),
-                  ),
-                  if (count != 3) const SizedBox(height: 8),
-                ],
-              ],
-            ),
-          ),
-        );
-      },
-    );
+    final expectedClapCount = _expectedClapCount();
+    final nextClapCount = _pendingClapCount + 1;
 
-    if (selectedCount == null || !mounted) {
+    if (nextClapCount < expectedClapCount) {
+      AudioService.playClap();
+      setState(() {
+        _pendingClapCount = nextClapCount;
+        feedbackMessage = '박수 $nextClapCount/$expectedClapCount 입력 중...';
+      });
       return;
     }
 
-    await _submitClapCount(selectedCount);
+    await _submitClapCount(expectedClapCount);
   }
 
   Future<void> _submitManse() async {
@@ -1638,12 +1638,20 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
 
     final currentTurnSocketId = gameState?['currentTurnSocketId']?.toString();
     final isMyTurn = mySocketId != null && mySocketId == currentTurnSocketId;
-    final expectedDisplayText =
-        gameState?['metadata']?['expectedDisplayText']?.toString() ?? '-';
+    final lastSubmittedDisplayText =
+        gameState?['metadata']?['lastSubmittedDisplayText']?.toString() ?? '-';
+    final expectedMoveType =
+        gameState?['metadata']?['expectedMoveType']?.toString() ?? '';
     final phase = gameState?['phase']?.toString() ?? 'playing';
     final isCountdownLocked = phase == 'waiting_start';
     final canSubmit = isMyTurn && phase == 'playing' && !isSubmitting;
     final canSubmitNumber = canSubmit && _typedNumber.isNotEmpty;
+    final canUseNumberPad = canSubmit && expectedMoveType == 'number';
+    final canUseClapButton = canSubmit && expectedMoveType == 'clap';
+    final expectedClapCount = _expectedClapCount();
+    final clapButtonLabel = canUseClapButton
+        ? '박수 입력 $_pendingClapCount/$expectedClapCount'
+        : '박수 입력 👏';
     final currentPlayerNickname = _nicknameBySocketId(currentTurnSocketId);
 
     return Scaffold(
@@ -1661,7 +1669,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
               _buildTopGamePanel(
                 isMyTurn: isMyTurn,
                 phase: phase,
-                expectedDisplayText: expectedDisplayText,
+                lastSubmittedDisplayText: lastSubmittedDisplayText,
                 currentPlayerNickname: currentPlayerNickname,
               ),
               const SizedBox(height: 8),
@@ -1692,6 +1700,9 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                   canSubmitNumber: canSubmitNumber,
                   isCountdownLocked: isCountdownLocked,
                   typedNumberText: typedNumberText,
+                  canUseNumberPad: canUseNumberPad,
+                  canUseClapButton: canUseClapButton,
+                  clapButtonLabel: clapButtonLabel,
                 ),
               ),
             ],

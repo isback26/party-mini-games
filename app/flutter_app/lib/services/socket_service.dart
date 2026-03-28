@@ -17,7 +17,7 @@ class SocketService {
     if (_socket != null && _socket!.connected) return;
 
     _socket = io.io(
-      'http://192.168.45.170:3000',
+      'http://192.168.45.110:3000',
       io.OptionBuilder()
           .setTransports(['websocket', 'polling'])
           .disableAutoConnect()

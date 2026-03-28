@@ -17,6 +17,7 @@ type ThreeSixNineMetadata = {
   clapNumbers: number[];
   expectedMoveType: ThreeSixNineMoveType;
   expectedDisplayText: string;
+  lastSubmittedDisplayText: string;
   lastActionMessage: string;
   loserSocketId?: string;
   loserNickname?: string;
@@ -49,6 +50,7 @@ export class ThreeSixNineEngine implements GameEngine {
         clapNumbers: [3, 6, 9],
         expectedMoveType: expectedMove.moveType,
         expectedDisplayText: expectedMove.displayText,
+        lastSubmittedDisplayText: "-",
         lastActionMessage: "게임이 시작되었습니다.",
       },
     };
@@ -105,6 +107,12 @@ submitTurn(
       room.settings.turnTimeLimitMs != null
         ? nextTurnStartedAt + room.settings.turnTimeLimitMs
         : null;
+    const submittedDisplayText =
+      expectedMove.moveType === "clap"
+        ? expectedMove.displayText
+        : expectedMove.moveType === "manse"
+          ? "만세"
+          : String(expectedNumber);
 
     return {
       isCorrect: true,
@@ -127,6 +135,7 @@ submitTurn(
           expectedNumber: nextExpectedNumber,
           expectedMoveType: nextExpectedMove.moveType,
           expectedDisplayText: nextExpectedMove.displayText,
+          lastSubmittedDisplayText: submittedDisplayText,
           lastActionMessage:
             expectedMove.moveType === "clap"
               ? `${currentPlayer} 님이 ${expectedMove.displayText} 입력 성공`
@@ -167,6 +176,10 @@ submitTurn(
         typeof metadata.expectedDisplayText === "string"
           ? metadata.expectedDisplayText
           : expectedMove.displayText,
+      lastSubmittedDisplayText:
+        typeof metadata.lastSubmittedDisplayText === "string"
+          ? metadata.lastSubmittedDisplayText
+          : "-",
       lastActionMessage:
         typeof metadata.lastActionMessage === "string"
           ? metadata.lastActionMessage
