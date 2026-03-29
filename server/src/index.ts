@@ -126,6 +126,33 @@ function generateRoomCode(): string {
   return result;
 }
 
+function buildStartOrderedRoom(room: GameRoom, previousGameState?: GameState): GameRoom {
+  const loserSocketId =
+    typeof previousGameState?.metadata?.loserSocketId === "string"
+      ? previousGameState.metadata.loserSocketId
+      : null;
+
+  if (!loserSocketId) {
+    return room;
+  }
+
+  const loserIndex = room.players.findIndex(
+    (player) => player.socketId === loserSocketId
+  );
+
+  if (loserIndex <= 0) {
+    return room;
+  }
+
+  return {
+    ...room,
+    players: [
+      ...room.players.slice(loserIndex),
+      ...room.players.slice(0, loserIndex),
+    ],
+  };
+}
+
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id}`);
 
@@ -412,7 +439,9 @@ io.on("connection", (socket) => {
         }
 
         const engine = createGameEngine(room.selectedGame);
-        const gameState = engine.createInitialState(room);
+        const previousGameState = roomGameStates.get(roomCode);
+        const orderedRoom = buildStartOrderedRoom(room, previousGameState);
+        const gameState = engine.createInitialState(orderedRoom);
 
         room.status = "playing";
         roomGameStates.set(roomCode, gameState);
@@ -630,7 +659,15 @@ setInterval(() => {
     }
 
     const loserNickname = getPlayerNickname(room, gameState.currentTurnSocketId);
-    const finishedState = buildTimeoutFinishedState(gameState);
+    const finishedState: GameState = {
+      ...buildTimeoutFinishedState(gameState),
+      metadata: {
+        ...gameState.metadata,
+        loserSocketId: gameState.currentTurnSocketId,
+        loserNickname,
+        lastActionMessage: `${loserNickname}님이 제한시간을 초과했습니다.`,
+      },
+    };
 
     room.status = "waiting";
     roomGameStates.set(roomCode, finishedState);

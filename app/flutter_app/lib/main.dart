@@ -95,72 +95,94 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
-          child: Column(
-            children: [
-              const SizedBox(height: 20),
-              const Text(
-                '모임에서 바로 즐기는 실시간 미니게임',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                connectionText,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: socketService.isConnected ? Colors.green : Colors.red,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 24),
-              TextField(
-                controller: nicknameController,
-                decoration: InputDecoration(
-                  labelText: '닉네임 입력',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+
+              double titleFontSize = 20;
+              if (width < 360) {
+                titleFontSize = 16;
+              } else if (width < 420) {
+                titleFontSize = 18;
+              }
+
+              return Column(
+                children: [
+                  const SizedBox(height: 20),
+                  Text(
+                    '모임에서 바로 즐기는 실시간 미니게임',
+                    style: TextStyle(
+                      fontSize: titleFontSize,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
                   ),
-                ),
-              ),
-              const SizedBox(height: 24),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '지원 예정 게임',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: ListView.separated(
-                  itemCount: games.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    return Card(
-                      child: ListTile(
-                        dense: true,
-                        title: Text(games[index]),
-                        trailing: const Icon(Icons.arrow_forward_ios),
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('${games[index]} 준비 중')),
-                          );
-                        },
+                  const SizedBox(height: 12),
+                  Text(
+                    connectionText,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: socketService.isConnected
+                          ? Colors.green
+                          : Colors.red,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: nicknameController,
+                    decoration: InputDecoration(
+                      labelText: '닉네임 입력',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: onLobbyEnterPressed,
-                  child: const Text('로비 입장'),
-                ),
-              ),
-            ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '지원 예정 게임',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: games.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        return Card(
+                          child: ListTile(
+                            dense: true,
+                            title: Text(games[index]),
+                            trailing: const Icon(Icons.arrow_forward_ios),
+                            onTap: () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('${games[index]} 준비 중')),
+                              );
+                            },
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: onLobbyEnterPressed,
+                      child: const Text('로비 입장'),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -1172,6 +1194,16 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     );
   }
 
+  String _nextStarterMessage() {
+    final loserSocketId = gameState?['metadata']?['loserSocketId']?.toString();
+    if (loserSocketId == null || loserSocketId.isEmpty) {
+      return '다음 게임 시작 플레이어를 확인할 수 없습니다.';
+    }
+
+    final nickname = _nicknameBySocketId(loserSocketId);
+    return '다음 게임은 $nickname님 부터 시작입니다.';
+  }
+
   Widget _buildBottomInputPanel({
     required bool canSubmit,
     required bool canSubmitNumber,
@@ -1231,83 +1263,82 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        Expanded(
-                          child: GridView.count(
-                            crossAxisCount: 5,
-                            physics: const NeverScrollableScrollPhysics(),
-                            mainAxisSpacing: 8,
-                            crossAxisSpacing: 8,
-                            childAspectRatio: 1.65,
-                            children: [
-                              _buildNumberPadKey('1', canUseNumberPad),
-                              _buildNumberPadKey('2', canUseNumberPad),
-                              _buildNumberPadKey('3', canUseNumberPad),
-                              _buildNumberPadKey('4', canUseNumberPad),
-                              _buildNumberPadKey('5', canUseNumberPad),
-                              _buildNumberPadKey('6', canUseNumberPad),
-                              _buildNumberPadKey('7', canUseNumberPad),
-                              _buildNumberPadKey('8', canUseNumberPad),
-                              _buildNumberPadKey('9', canUseNumberPad),
-                              _buildNumberPadKey('0', canUseNumberPad),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
+                  Column(
+                    children: [
+                      SizedBox(
+                        height: 180,
+                        child: GridView.count(
+                          crossAxisCount: 5,
+                          physics: const NeverScrollableScrollPhysics(),
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                          childAspectRatio: 1.65,
                           children: [
-                            Expanded(
-                              child: _buildNumberPadButton(
-                                label: '←',
-                                onTap: canUseNumberPad ? _backspaceDigit : null,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: _buildNumberPadButton(
-                                label: '전체삭제',
-                                onTap: canUseNumberPad
-                                    ? _clearTypedNumber
-                                    : null,
-                                backgroundColor: Colors.grey.shade300,
-                                foregroundColor: Colors.black87,
-                              ),
-                            ),
+                            _buildNumberPadKey('1', canUseNumberPad),
+                            _buildNumberPadKey('2', canUseNumberPad),
+                            _buildNumberPadKey('3', canUseNumberPad),
+                            _buildNumberPadKey('4', canUseNumberPad),
+                            _buildNumberPadKey('5', canUseNumberPad),
+                            _buildNumberPadKey('6', canUseNumberPad),
+                            _buildNumberPadKey('7', canUseNumberPad),
+                            _buildNumberPadKey('8', canUseNumberPad),
+                            _buildNumberPadKey('9', canUseNumberPad),
+                            _buildNumberPadKey('0', canUseNumberPad),
                           ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: SizedBox(
+                              height: 52,
+                              child: ElevatedButton(
+                                onPressed: canUseClapButton
+                                    ? _handleClapTap
+                                    : null,
+                                child: Text(clapButtonLabel),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: SizedBox(
+                              height: 52,
+                              child: ElevatedButton(
+                                onPressed: canSubmit ? _submitManse : null,
+                                child: const Text('만세 입력 🙌'),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildNumberPadButton(
+                              label: '←',
+                              onTap: canUseNumberPad ? _backspaceDigit : null,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildNumberPadButton(
+                              label: '전체삭제',
+                              onTap: canUseNumberPad ? _clearTypedNumber : null,
+                              backgroundColor: Colors.grey.shade300,
+                              foregroundColor: Colors.black87,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
           ),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: SizedBox(
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: canUseClapButton ? _handleClapTap : null,
-                  child: Text(clapButtonLabel),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: SizedBox(
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: canSubmit ? _submitManse : null,
-                  child: const Text('만세 입력 🙌'),
-                ),
-              ),
-            ),
-          ],
         ),
       ],
     );
@@ -1382,7 +1413,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       gameState = data?['gameState'];
       _pendingClapCount = 0;
       statusMessage = data?['message']?.toString() ?? '게임이 종료되었습니다.';
-      feedbackMessage = '게임 종료! 결과를 확인해주세요.';
+      feedbackMessage = statusMessage;
       isSubmitting = false;
     });
 
@@ -1393,9 +1424,11 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
+        final nextStarterMessage = _nextStarterMessage();
+
         return AlertDialog(
           title: const Text('게임 종료'),
-          content: Text(statusMessage),
+          content: Text('$statusMessage\n\n$nextStarterMessage'),
           actions: [
             TextButton(
               onPressed: () {
@@ -1492,16 +1525,9 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     return expectedNumber.toString().length;
   }
 
-  bool _isNumberTurn() {
-    final expectedMoveType =
-        gameState?['metadata']?['expectedMoveType']?.toString() ?? '';
-    return expectedMoveType == 'number';
-  }
-
   void _appendDigit(String digit) {
     if (isSubmitting) return;
     if (!RegExp(r'^\d$').hasMatch(digit)) return;
-    if (!_isNumberTurn()) return;
 
     final expectedDigits = _expectedNumberDigitLength();
     final nextTyped = _typedNumber == '0' ? digit : '$_typedNumber$digit';
@@ -1532,12 +1558,6 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     setState(() {
       _typedNumber = '';
     });
-  }
-
-  bool _isClapTurn() {
-    final expectedMoveType =
-        gameState?['metadata']?['expectedMoveType']?.toString() ?? '';
-    return expectedMoveType == 'clap';
   }
 
   int _expectedClapCount() {
@@ -1601,8 +1621,6 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
 
   Future<void> _handleClapTap() async {
     if (isSubmitting) return;
-    if (!_isClapTurn()) return;
-
     final expectedClapCount = _expectedClapCount();
     final nextClapCount = _pendingClapCount + 1;
 
@@ -1640,18 +1658,13 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     final isMyTurn = mySocketId != null && mySocketId == currentTurnSocketId;
     final lastSubmittedDisplayText =
         gameState?['metadata']?['lastSubmittedDisplayText']?.toString() ?? '-';
-    final expectedMoveType =
-        gameState?['metadata']?['expectedMoveType']?.toString() ?? '';
     final phase = gameState?['phase']?.toString() ?? 'playing';
     final isCountdownLocked = phase == 'waiting_start';
     final canSubmit = isMyTurn && phase == 'playing' && !isSubmitting;
     final canSubmitNumber = canSubmit && _typedNumber.isNotEmpty;
-    final canUseNumberPad = canSubmit && expectedMoveType == 'number';
-    final canUseClapButton = canSubmit && expectedMoveType == 'clap';
-    final expectedClapCount = _expectedClapCount();
-    final clapButtonLabel = canUseClapButton
-        ? '박수 입력 $_pendingClapCount/$expectedClapCount'
-        : '박수 입력 👏';
+    final canUseNumberPad = canSubmit;
+    final canUseClapButton = canSubmit;
+    const clapButtonLabel = '박수 입력 👏';
     final currentPlayerNickname = _nicknameBySocketId(currentTurnSocketId);
 
     return Scaffold(

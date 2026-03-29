@@ -68,6 +68,7 @@ submitTurn(
     const currentPlayer =
       room.players.find((player) => player.socketId === payload.playerSocketId)?.nickname ??
       "알 수 없음";
+    const submittedDisplayText = this.getSubmittedDisplayText(payload);
 
     const isCorrect =
       expectedMove.moveType === "clap"
@@ -81,7 +82,7 @@ submitTurn(
       return {
         isCorrect: false,
         isFinished: true,
-        message: `${currentPlayer} 님이 틀렸습니다. 게임 종료!`,
+        message: `${currentPlayer} 님이 "${submittedDisplayText}"를 입력했습니다. 정답은 "${expectedMove.displayText}"인데 틀렸습니다. 게임 종료!`,
         gameState: {
           ...gameState,
           phase: "finished",
@@ -91,7 +92,8 @@ submitTurn(
             expectedNumber,
             expectedMoveType: expectedMove.moveType,
             expectedDisplayText: expectedMove.displayText,
-            lastActionMessage: `${currentPlayer} 님이 틀렸습니다.`,
+            lastSubmittedDisplayText: submittedDisplayText,
+            lastActionMessage: `${currentPlayer} 님이 "${submittedDisplayText}"를 입력했습니다. 정답은 "${expectedMove.displayText}"인데 틀렸습니다.`,
             loserSocketId: payload.playerSocketId,
             loserNickname: currentPlayer,
           },
@@ -107,12 +109,6 @@ submitTurn(
       room.settings.turnTimeLimitMs != null
         ? nextTurnStartedAt + room.settings.turnTimeLimitMs
         : null;
-    const submittedDisplayText =
-      expectedMove.moveType === "clap"
-        ? expectedMove.displayText
-        : expectedMove.moveType === "manse"
-          ? "만세"
-          : String(expectedNumber);
 
     return {
       isCorrect: true,
@@ -226,6 +222,26 @@ submitTurn(
     const clapCount = [...text].filter((char) => char === "👏").length;
 
     return clapCount > 0 ? clapCount : 1;
+  }
+
+  private getSubmittedDisplayText(payload: GameSubmitPayload): string {
+    if (payload.moveType === "number") {
+      if (typeof payload.value === "number" && Number.isFinite(payload.value)) {
+        return String(payload.value);
+      }
+      return typeof payload.text === "string" && payload.text.trim().length > 0
+        ? payload.text.trim()
+        : "?";
+    }
+
+    if (payload.moveType === "clap") {
+      return typeof payload.text === "string" && payload.text.trim().length > 0
+        ? payload.text
+        : "👏";
+    }
+
+    if (payload.moveType === "manse") return "🙌";
+    return typeof payload.text === "string" && payload.text.trim().length > 0 ? payload.text : "?";
   }
 
   private normalizeDifficulty(value: unknown): ThreeSixNineDifficulty {
