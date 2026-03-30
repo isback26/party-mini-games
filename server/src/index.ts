@@ -59,6 +59,52 @@ type RoomUpdateSettingsEventPayload = {
 const TURN_TIMEOUT_CHECK_INTERVAL_MS = 100;
 const GAME_START_COUNTDOWN_MS = 4000;
 
+function finishGameState(
+  gameState: GameState,
+  metadataPatch: Record<string, unknown>
+): GameState {
+  return {
+    ...gameState,
+    phase: "finished",
+    currentTurnSocketId: null,
+    turnStartedAt: null,
+    turnDeadlineAt: null,
+    metadata: {
+      ...gameState.metadata,
+      ...metadataPatch,
+    },
+  };
+}
+
+function attachStartCountdownMetadata(gameState: GameState): GameState {
+  if (gameState.phase !== "waiting_start") {
+    return gameState;
+  }
+
+  const hasCountdownEndsAt =
+    typeof gameState.metadata?.countdownEndsAt === "number";
+
+  if (hasCountdownEndsAt) {
+    return gameState;
+  }
+
+  const countdownStartedAt = Date.now();
+  const countdownEndsAt = countdownStartedAt + GAME_START_COUNTDOWN_MS;
+
+  return {
+    ...gameState,
+    metadata: {
+      ...gameState.metadata,
+      countdownStartedAt,
+      countdownEndsAt,
+      lastActionMessage:
+        typeof gameState.metadata?.lastActionMessage === "string"
+          ? gameState.metadata.lastActionMessage
+          : "시작 구호가 끝나면 첫 번째 플레이어부터 입력합니다.",
+    },
+  };
+}
+
 function buildTimeoutFinishedState(gameState: GameState): GameState {
   return {
     ...gameState,
@@ -112,8 +158,136 @@ function beginPlayingPhase(
       ...gameState.metadata,
       countdownStartedAt: null,
       countdownEndsAt: null,
-      lastActionMessage: "시작! 첫 번째 플레이어가 입력해주세요.",
+      lastActionMessage:
+        gameState.gameType === "nunchi"
+          ? "시작! 살아있는 사람 누구나 먼저 숫자를 누르세요."
+          : "시작! 첫 번째 플레이어가 입력해주세요.",
     },
+  };
+}
+
+function finalizeNunchiPendingWindow(
+  room: GameRoom,
+  gameState: GameState
+): { gameState: GameState; isFinished: boolean; message: string } {
+  const pendingNumber =
+    typeof gameState.metadata?.pendingNumber === "number"
+      ? gameState.metadata.pendingNumber
+      : null;
+  const pendingSubmissions = Array.isArray(gameState.metadata?.pendingSubmissions)
+    ? (gameState.metadata.pendingSubmissions as Array<{
+        socketId: string;
+        nickname: string;
+        submittedAt: number;
+      }>)
+    : [];
+  const aliveSocketIds = Array.isArray(gameState.metadata?.aliveSocketIds)
+    ? (gameState.metadata.aliveSocketIds as string[])
+    : [];
+  const submittedNumbers = Array.isArray(gameState.metadata?.submittedNumbers)
+    ? ([...gameState.metadata.submittedNumbers] as number[])
+    : [];
+  const expectedNumber =
+    typeof gameState.metadata?.expectedNumber === "number"
+      ? gameState.metadata.expectedNumber
+      : 1;
+
+  if (pendingNumber == null || pendingSubmissions.length === 0) {
+    return {
+      gameState,
+      isFinished: false,
+      message:
+        gameState.metadata?.lastActionMessage?.toString() ??
+        "눈치게임 상태가 유지되었습니다.",
+    };
+  }
+
+  const uniqueSocketIds = [...new Set(pendingSubmissions.map((item) => item.socketId))];
+
+  if (uniqueSocketIds.length >= 2) {
+    const loserNicknames = uniqueSocketIds.map((socketId) =>
+      getPlayerNickname(room, socketId)
+    );
+    const message = `${pendingNumber}을(를) 0.5초 안에 동시에 눌러 ${loserNicknames.join(", ")}님이 탈락했습니다.`;
+
+    return {
+      gameState: finishGameState(gameState, {
+        loserSocketIds: uniqueSocketIds,
+        loserSocketId: uniqueSocketIds[0] ?? null,
+        loserNicknames,
+        loserNickname: loserNicknames[0] ?? null,
+        pendingNumber: null,
+        pendingWindowEndsAt: null,
+        pendingSubmissions: [],
+        pendingSubmitterSocketIds: [],
+        lastSubmittedDisplayText: pendingNumber.toString(),
+        lastActionMessage: message,
+      }),
+      isFinished: true,
+      message,
+    };
+  }
+
+  const successSocketId = uniqueSocketIds[0];
+  const successNickname = getPlayerNickname(room, successSocketId);
+  const nextAliveSocketIds = aliveSocketIds.filter(
+    (socketId) => socketId !== successSocketId
+  );
+  const nextSubmittedNumbers = [...submittedNumbers, pendingNumber];
+
+  if (nextAliveSocketIds.length <= 1) {
+    const loserSocketId = nextAliveSocketIds[0] ?? null;
+    const loserNickname = getPlayerNickname(room, loserSocketId);
+    const message = `${successNickname}님이 ${pendingNumber} 성공! 마지막까지 남은 ${loserNickname}님이 탈락했습니다.`;
+
+    return {
+      gameState: finishGameState(gameState, {
+        aliveSocketIds: nextAliveSocketIds,
+        submittedNumbers: nextSubmittedNumbers,
+        expectedNumber: expectedNumber + 1,
+        loserSocketIds: loserSocketId ? [loserSocketId] : [],
+        loserSocketId,
+        loserNicknames: loserSocketId ? [loserNickname] : [],
+        loserNickname: loserSocketId ? loserNickname : null,
+        pendingNumber: null,
+        pendingWindowEndsAt: null,
+        pendingSubmissions: [],
+        pendingSubmitterSocketIds: [],
+        lastSubmittedDisplayText: pendingNumber.toString(),
+        lastActionMessage: message,
+      }),
+      isFinished: true,
+      message,
+    };
+  }
+
+  const nextState = resetTurnTimer(
+    {
+      ...gameState,
+      currentTurnSocketId: null,
+      round: gameState.round + 1,
+      metadata: {
+        ...gameState.metadata,
+        aliveSocketIds: nextAliveSocketIds,
+        submittedNumbers: nextSubmittedNumbers,
+        expectedNumber: expectedNumber + 1,
+        pendingNumber: null,
+        pendingWindowEndsAt: null,
+        pendingSubmissions: [],
+        pendingSubmitterSocketIds: [],
+        lastSubmittedDisplayText: pendingNumber.toString(),
+        lastActionMessage: `${successNickname}님이 ${pendingNumber} 성공! 다음 숫자는 ${expectedNumber + 1}입니다.`,
+      },
+    },
+    room.settings.turnTimeLimitMs
+  );
+
+  return {
+    gameState: nextState,
+    isFinished: false,
+    message:
+      nextState.metadata?.lastActionMessage?.toString() ??
+      `${successNickname}님이 ${pendingNumber} 성공!`,
   };
 }
 
@@ -441,7 +615,9 @@ io.on("connection", (socket) => {
         const engine = createGameEngine(room.selectedGame);
         const previousGameState = roomGameStates.get(roomCode);
         const orderedRoom = buildStartOrderedRoom(room, previousGameState);
-        const gameState = engine.createInitialState(orderedRoom);
+        const gameState = attachStartCountdownMetadata(
+          engine.createInitialState(orderedRoom)
+        );
 
         room.status = "playing";
         roomGameStates.set(roomCode, gameState);
@@ -507,11 +683,6 @@ io.on("connection", (socket) => {
           return;
         }
 
-        if (room.selectedGame !== "three_six_nine") {
-          callback({ ok: false, message: "아직 369 게임만 제출할 수 있습니다." });
-          return;
-        }
-
         const gameState = roomGameStates.get(roomCode);
 
         if (!gameState) {
@@ -519,7 +690,10 @@ io.on("connection", (socket) => {
           return;
         }
 
-        if (gameState.currentTurnSocketId !== socket.id) {
+        if (
+          room.selectedGame !== "nunchi" &&
+          gameState.currentTurnSocketId !== socket.id
+        ) {
           callback({ ok: false, message: "지금은 당신의 턴이 아닙니다." });
           return;
         }
@@ -644,10 +818,46 @@ setInterval(() => {
           gameState,
           room.settings.turnTimeLimitMs
         );
+        if (playingState.gameType === "nunchi") {
+          playingState.metadata = {
+            ...playingState.metadata,
+            lastActionMessage: "시작! 살아있는 사람 누구나 먼저 숫자를 누르세요.",
+          };
+        }
         roomGameStates.set(roomCode, playingState);
         io.to(roomCode).emit("game:state", playingState);
       }
       continue;
+    }
+
+    if (gameState.gameType === "nunchi" && gameState.phase === "playing") {
+      const pendingWindowEndsAt =
+        typeof gameState.metadata?.pendingWindowEndsAt === "number"
+          ? gameState.metadata.pendingWindowEndsAt
+          : null;
+
+      if (pendingWindowEndsAt != null) {
+        if (now >= pendingWindowEndsAt) {
+          const finalized = finalizeNunchiPendingWindow(room, gameState);
+
+          if (finalized.isFinished) {
+            room.status = "waiting";
+            roomGameStates.set(roomCode, finalized.gameState);
+            io.to(roomCode).emit("room:update", room);
+            io.to(roomCode).emit("game:state", finalized.gameState);
+            io.to(roomCode).emit("game:over", {
+              roomCode,
+              gameType: room.selectedGame,
+              gameState: finalized.gameState,
+              message: finalized.message,
+            });
+          } else {
+            roomGameStates.set(roomCode, finalized.gameState);
+            io.to(roomCode).emit("game:state", finalized.gameState);
+          }
+        }
+        continue;
+      }
     }
 
     if (gameState.phase !== "playing" || gameState.turnDeadlineAt == null) {
@@ -658,14 +868,61 @@ setInterval(() => {
       continue;
     }
 
+    const timeoutLoserNickname = getPlayerNickname(
+      room,
+      gameState.currentTurnSocketId
+    );
+    if (gameState.gameType === "nunchi") {
+      const aliveSocketIds = Array.isArray(gameState.metadata?.aliveSocketIds)
+        ? (gameState.metadata.aliveSocketIds as string[])
+        : [];
+      const expectedNumber =
+        typeof gameState.metadata?.expectedNumber === "number"
+          ? gameState.metadata.expectedNumber
+          : 1;
+      const loserNicknames = aliveSocketIds.map((socketId) =>
+        getPlayerNickname(room, socketId)
+      );
+      const message =
+        loserNicknames.length > 0
+          ? `제한시간 안에 아무도 ${expectedNumber}을(를) 누르지 못해 ${loserNicknames.join(", ")}님이 탈락했습니다.`
+          : "제한시간 안에 아무도 입력하지 못했습니다.";
+
+      const finishedState = finishGameState(gameState, {
+        loserSocketIds: aliveSocketIds,
+        loserSocketId: aliveSocketIds[0] ?? null,
+        loserNicknames,
+        loserNickname: loserNicknames[0] ?? null,
+        lastSubmittedSocketId: null,
+        pendingNumber: null,
+        pendingWindowEndsAt: null,
+        pendingSubmissions: [],
+        pendingSubmitterSocketIds: [],
+        lastActionMessage: message,
+      });
+
+      room.status = "waiting";
+      roomGameStates.set(roomCode, finishedState);
+
+      io.to(roomCode).emit("room:update", room);
+      io.to(roomCode).emit("game:state", finishedState);
+      io.to(roomCode).emit("game:over", {
+        roomCode,
+        gameType: room.selectedGame,
+        gameState: finishedState,
+        message,
+      });
+      continue;
+    }
+
     const loserNickname = getPlayerNickname(room, gameState.currentTurnSocketId);
     const finishedState: GameState = {
       ...buildTimeoutFinishedState(gameState),
       metadata: {
         ...gameState.metadata,
         loserSocketId: gameState.currentTurnSocketId,
-        loserNickname,
-        lastActionMessage: `${loserNickname}님이 제한시간을 초과했습니다.`,
+        loserNickname: timeoutLoserNickname,
+        lastActionMessage: `${timeoutLoserNickname}님이 제한시간을 초과했습니다.`,
       },
     };
 
@@ -678,7 +935,7 @@ setInterval(() => {
       roomCode,
       gameType: room.selectedGame,
       gameState: finishedState,
-      message: `${loserNickname}님이 제한시간을 초과했습니다.`,
+      message: `${timeoutLoserNickname}님이 제한시간을 초과했습니다.`,
     });
   }
 }, TURN_TIMEOUT_CHECK_INTERVAL_MS);

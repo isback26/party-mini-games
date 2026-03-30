@@ -304,6 +304,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
           ),
         ),
       );
+    } else if (gameType == 'nunchi') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => NunchiGameScreen(
+            nickname: widget.nickname,
+            socketService: widget.socketService,
+            roomCode: currentRoomCode ?? '',
+            players: players,
+            initialGameState: gameState,
+          ),
+        ),
+      );
     }
   }
 
@@ -895,6 +908,702 @@ class ThreeSixNineGameScreen extends StatefulWidget {
 
   @override
   State<ThreeSixNineGameScreen> createState() => _ThreeSixNineGameScreenState();
+}
+
+class NunchiGameScreen extends StatefulWidget {
+  final String nickname;
+  final SocketService socketService;
+  final String roomCode;
+  final List<dynamic> players;
+  final dynamic initialGameState;
+
+  const NunchiGameScreen({
+    super.key,
+    required this.nickname,
+    required this.socketService,
+    required this.roomCode,
+    required this.players,
+    required this.initialGameState,
+  });
+
+  @override
+  State<NunchiGameScreen> createState() => _NunchiGameScreenState();
+}
+
+class _ParticipantSeatBoard extends StatelessWidget {
+  final List<dynamic> players;
+  final String? currentTurnSocketId;
+  final String? lastSubmittedSocketId;
+  final List<dynamic>? aliveSocketIds;
+  final bool showAliveState;
+
+  const _ParticipantSeatBoard({
+    required this.players,
+    required this.currentTurnSocketId,
+    required this.lastSubmittedSocketId,
+    this.aliveSocketIds,
+    this.showAliveState = false,
+  });
+
+  bool _isAlive(String? socketId) {
+    if (!showAliveState || socketId == null) {
+      return true;
+    }
+    return aliveSocketIds?.contains(socketId) ?? false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: List.generate(players.length, (index) {
+          final player = players[index];
+          final socketId = player['socketId']?.toString();
+          final nickname = player['nickname']?.toString() ?? '이름 없음';
+          final isCurrent =
+              currentTurnSocketId != null && socketId == currentTurnSocketId;
+          final isLast =
+              lastSubmittedSocketId != null &&
+              socketId == lastSubmittedSocketId;
+          final isAlive = _isAlive(socketId);
+
+          Color backgroundColor = Colors.white;
+          Color borderColor = Colors.grey.shade300;
+
+          if (isLast) {
+            backgroundColor = Colors.amber.shade100;
+            borderColor = Colors.orange.shade400;
+          } else if (isCurrent) {
+            backgroundColor = Colors.green.shade100;
+            borderColor = Colors.green.shade400;
+          } else if (!isAlive) {
+            backgroundColor = Colors.grey.shade300;
+            borderColor = Colors.grey.shade500;
+          }
+
+          String statusLabel = '${index + 1}번';
+          if (isLast) {
+            statusLabel = '방금 입력';
+          } else if (isCurrent) {
+            statusLabel = '현재 차례';
+          } else if (showAliveState) {
+            statusLabel = isAlive ? '생존' : '탈출/탈락';
+          }
+
+          return Container(
+            width: 108,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: borderColor, width: 1.5),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  statusLabel,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  nickname,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+class _NunchiGameScreenState extends State<NunchiGameScreen> {
+  dynamic gameState;
+  String _typedNumber = '';
+  String feedbackMessage = '눈치게임 준비 중입니다.';
+  bool isSubmitting = false;
+  Timer? _turnTimer;
+  double _turnTimeProgress = 1.0;
+  int _remainingTurnMs = 0;
+  int _countdownRemainingMs = 0;
+  bool _isGameOverDialogOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    gameState = widget.initialGameState;
+    _syncTurnTimer(gameState);
+
+    widget.socketService.off('game:state');
+    widget.socketService.off('game:over');
+    widget.socketService.on('game:state', _handleGameState);
+    widget.socketService.on('game:over', _handleGameOver);
+  }
+
+  @override
+  void dispose() {
+    widget.socketService.off('game:state');
+    widget.socketService.off('game:over');
+    _turnTimer?.cancel();
+    super.dispose();
+  }
+
+  void _syncTurnTimer(dynamic nextGameState) {
+    _turnTimer?.cancel();
+
+    final phase = nextGameState?['phase']?.toString();
+    final turnStartedAt = nextGameState?['turnStartedAt'] as int?;
+    final turnDeadlineAt = nextGameState?['turnDeadlineAt'] as int?;
+    final countdownEndsAt =
+        nextGameState?['metadata']?['countdownEndsAt'] as int?;
+
+    if (phase == 'waiting_start' && countdownEndsAt != null) {
+      void updateCountdown() {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final remainingMs = (countdownEndsAt - now).clamp(0, 4000);
+
+        if (!mounted) return;
+        setState(() {
+          _countdownRemainingMs = remainingMs;
+          _turnTimeProgress = 0;
+          _remainingTurnMs = 0;
+        });
+      }
+
+      updateCountdown();
+      _turnTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+        updateCountdown();
+      });
+      return;
+    }
+
+    if (phase != 'playing' || turnStartedAt == null || turnDeadlineAt == null) {
+      if (!mounted) return;
+      setState(() {
+        _countdownRemainingMs = 0;
+        _turnTimeProgress = 0;
+        _remainingTurnMs = 0;
+      });
+      return;
+    }
+
+    void updateTick() {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final totalMs = (turnDeadlineAt - turnStartedAt).clamp(1, 1 << 30);
+      final remainingMs = (turnDeadlineAt - now).clamp(0, totalMs);
+      final progress = remainingMs / totalMs;
+
+      if (!mounted) return;
+      setState(() {
+        _remainingTurnMs = remainingMs;
+        _countdownRemainingMs = 0;
+        _turnTimeProgress = progress.clamp(0.0, 1.0);
+      });
+    }
+
+    updateTick();
+    _turnTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      updateTick();
+    });
+  }
+
+  void _handleGameState(dynamic data) {
+    if (!mounted) return;
+
+    final previousPhase = gameState?['phase']?.toString();
+    final nextPhase = data?['phase']?.toString() ?? 'waiting_start';
+
+    if (previousPhase == 'waiting_start' && nextPhase == 'playing') {
+      AudioService.playTurnStart();
+    }
+
+    _syncTurnTimer(data);
+    setState(() {
+      gameState = data;
+      isSubmitting = false;
+      _typedNumber = '';
+      feedbackMessage =
+          data?['metadata']?['lastActionMessage']?.toString() ??
+          '상태가 업데이트되었습니다.';
+    });
+  }
+
+  void _handleGameOver(dynamic data) {
+    if (!mounted || _isGameOverDialogOpen) return;
+
+    AudioService.playGameOver();
+    _isGameOverDialogOpen = true;
+
+    setState(() {
+      _turnTimer?.cancel();
+      gameState = data?['gameState'];
+      feedbackMessage = data?['message']?.toString() ?? '게임이 종료되었습니다.';
+      isSubmitting = false;
+    });
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('게임 종료'),
+          content: Text(feedbackMessage),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                if (mounted && Navigator.of(context).canPop()) {
+                  Navigator.of(context).pop();
+                }
+              },
+              child: const Text('로비로 돌아가기'),
+            ),
+          ],
+        );
+      },
+    ).then((_) {
+      _isGameOverDialogOpen = false;
+    });
+  }
+
+  String _countdownLabel() {
+    if (_countdownRemainingMs > 3000) return '3';
+    if (_countdownRemainingMs > 2000) return '2';
+    if (_countdownRemainingMs > 1000) return '1';
+    return '시작';
+  }
+
+  String _formatRemainingTurnTime(int ms) {
+    if (ms <= 0) return '0.0초';
+    final seconds = ms / 1000;
+    return '${seconds.toStringAsFixed(1)}초';
+  }
+
+  String _nicknameFromSocketId(String? socketId) {
+    if (socketId == null) return '알 수 없음';
+
+    for (final player in widget.players) {
+      if (player['socketId']?.toString() == socketId) {
+        return player['nickname']?.toString() ?? '알 수 없음';
+      }
+    }
+    return '알 수 없음';
+  }
+
+  Widget _buildLastActionHighlightPanel({
+    required String phase,
+    required String lastSubmittedDisplayText,
+    required String? lastSubmittedSocketId,
+  }) {
+    final hasLastInput =
+        phase != 'waiting_start' &&
+        lastSubmittedSocketId != null &&
+        lastSubmittedDisplayText != '-';
+
+    final nickname = _nicknameFromSocketId(lastSubmittedSocketId);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: hasLastInput ? Colors.amber.shade50 : Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: hasLastInput ? Colors.orange.shade300 : Colors.grey.shade300,
+          width: hasLastInput ? 1.6 : 1.0,
+        ),
+        boxShadow: hasLastInput
+            ? [
+                BoxShadow(
+                  color: Colors.orange.withValues(alpha: 0.12),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
+      ),
+      child: hasLastInput
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade200,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        '방금 입력',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '$nickname  →  $lastSubmittedDisplayText',
+                    style: const TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : const Text(
+              '아직 입력된 숫자가 없습니다.',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+    );
+  }
+
+  Future<void> _submitTypedNumber(int value) async {
+    if (isSubmitting) return;
+
+    setState(() {
+      isSubmitting = true;
+    });
+
+    widget.socketService.submitGameInput(
+      roomCode: widget.roomCode,
+      moveType: 'number',
+      value: value,
+      callback: (response) {
+        if (!mounted) return;
+
+        final ok = response != null && response['ok'] == true;
+        if (!ok) {
+          setState(() {
+            isSubmitting = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                response?['message']?.toString() ?? '숫자 제출에 실패했습니다.',
+              ),
+            ),
+          );
+        }
+      },
+    );
+  }
+
+  int _expectedNumberDigitLength() {
+    final expectedNumber = gameState?['metadata']?['expectedNumber'] as int?;
+    if (expectedNumber == null) {
+      return 1;
+    }
+    return expectedNumber.toString().length;
+  }
+
+  void _appendDigit(String digit) {
+    if (isSubmitting) return;
+    if (!RegExp(r'^\d$').hasMatch(digit)) return;
+
+    final expectedDigits = _expectedNumberDigitLength();
+    final nextTyped = _typedNumber == '0' ? digit : '$_typedNumber$digit';
+
+    setState(() {
+      _typedNumber = nextTyped;
+    });
+
+    if (nextTyped.length == expectedDigits) {
+      final value = int.tryParse(nextTyped);
+      if (value != null) {
+        _submitTypedNumber(value);
+      }
+    }
+  }
+
+  Widget _buildNumberPadButton({
+    required String label,
+    required VoidCallback? onTap,
+    Color? backgroundColor,
+    Color? foregroundColor,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 60,
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: backgroundColor,
+          foregroundColor: foregroundColor,
+          disabledBackgroundColor: Colors.grey.shade300,
+          disabledForegroundColor: Colors.grey.shade500,
+          textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        child: Text(label),
+      ),
+    );
+  }
+
+  Widget _buildNumberPadKey(String digit, bool enabled) {
+    return _buildNumberPadButton(
+      label: digit,
+      onTap: enabled ? () => _appendDigit(digit) : null,
+    );
+  }
+
+  Widget _buildBottomInputPanel({
+    required bool canUseNumberPad,
+    required bool isCountdownLocked,
+    required String typedNumberText,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 180),
+            opacity: isCountdownLocked ? 0.55 : 1.0,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isCountdownLocked
+                    ? Colors.grey.shade200
+                    : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: isCountdownLocked
+                      ? Colors.grey.shade400
+                      : Colors.grey.shade300,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    height: 48,
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: isCountdownLocked
+                          ? Colors.grey.shade50
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade400),
+                    ),
+                    child: Text(
+                      isCountdownLocked ? '시작 준비 중' : typedNumberText,
+                      style: TextStyle(
+                        fontSize: _typedNumber.length >= 6 ? 20 : 24,
+                        fontWeight: FontWeight.bold,
+                        color: isCountdownLocked
+                            ? Colors.grey.shade500
+                            : _typedNumber.isEmpty
+                            ? Colors.grey.shade500
+                            : Colors.black,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 130,
+                    child: GridView.count(
+                      crossAxisCount: 5,
+                      physics: const NeverScrollableScrollPhysics(),
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 1.65,
+                      children: [
+                        _buildNumberPadKey('1', canUseNumberPad),
+                        _buildNumberPadKey('2', canUseNumberPad),
+                        _buildNumberPadKey('3', canUseNumberPad),
+                        _buildNumberPadKey('4', canUseNumberPad),
+                        _buildNumberPadKey('5', canUseNumberPad),
+                        _buildNumberPadKey('6', canUseNumberPad),
+                        _buildNumberPadKey('7', canUseNumberPad),
+                        _buildNumberPadKey('8', canUseNumberPad),
+                        _buildNumberPadKey('9', canUseNumberPad),
+                        _buildNumberPadKey('0', canUseNumberPad),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mySocketId = widget.socketService.socket?.id;
+    final phase = gameState?['phase']?.toString() ?? 'waiting_start';
+    final expectedNumber =
+        gameState?['metadata']?['expectedNumber'] as int? ?? 1;
+    final targetNumber = gameState?['metadata']?['targetNumber'] as int? ?? 1;
+    final lastSubmittedDisplayText =
+        gameState?['metadata']?['lastSubmittedDisplayText']?.toString() ?? '-';
+    final lastSubmittedSocketId =
+        gameState?['metadata']?['lastSubmittedSocketId']?.toString();
+    final aliveSocketIds =
+        (gameState?['metadata']?['aliveSocketIds'] as List?) ?? const [];
+    final pendingSubmitterSocketIds =
+        (gameState?['metadata']?['pendingSubmitterSocketIds'] as List?) ??
+        const [];
+    final submittedNumbers =
+        (gameState?['metadata']?['submittedNumbers'] as List?) ?? const [];
+
+    final isAlive = mySocketId != null && aliveSocketIds.contains(mySocketId);
+    final isPending =
+        mySocketId != null && pendingSubmitterSocketIds.contains(mySocketId);
+    final isCountdownLocked = phase == 'waiting_start';
+    final canUseNumberPad =
+        phase == 'playing' && isAlive && !isPending && !isSubmitting;
+    final typedNumberText = _typedNumber.isEmpty ? '입력 없음' : _typedNumber;
+
+    return Scaffold(
+      resizeToAvoidBottomInset: false,
+      appBar: AppBar(
+        title: const Text('눈치게임'),
+        centerTitle: true,
+        automaticallyImplyLeading: false,
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      phase == 'waiting_start'
+                          ? '곧 시작됩니다'
+                          : '현재 숫자: $expectedNumber / 목표 숫자: $targetNumber',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      phase == 'waiting_start'
+                          ? '카운트다운 후 아무나 먼저 1을 누르세요.'
+                          : '숫자를 잘못 누르면 즉시 실패합니다.',
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        value: phase == 'playing' ? _turnTimeProgress : 0,
+                        minHeight: 10,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      phase == 'waiting_start'
+                          ? '카운트다운: ${_countdownLabel()}'
+                          : '남은 시간: ${_formatRemainingTurnTime(_remainingTurnMs)}',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '직전 숫자: $lastSubmittedDisplayText',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '성공 숫자 기록: ${submittedNumbers.isEmpty ? "-" : submittedNumbers.join(", ")}',
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      feedbackMessage,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              _buildLastActionHighlightPanel(
+                phase: phase,
+                lastSubmittedDisplayText: lastSubmittedDisplayText,
+                lastSubmittedSocketId: lastSubmittedSocketId,
+              ),
+              const SizedBox(height: 10),
+              _ParticipantSeatBoard(
+                players: widget.players,
+                currentTurnSocketId: null,
+                lastSubmittedSocketId: lastSubmittedSocketId,
+                aliveSocketIds: aliveSocketIds,
+                showAliveState: true,
+              ),
+              const SizedBox(height: 10),
+              Flexible(
+                child: _buildBottomInputPanel(
+                  canUseNumberPad: canUseNumberPad,
+                  isCountdownLocked: isCountdownLocked,
+                  typedNumberText: typedNumberText,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
@@ -1655,6 +2364,8 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     final typedNumberText = _typedNumber.isEmpty ? '입력 없음' : _typedNumber;
 
     final currentTurnSocketId = gameState?['currentTurnSocketId']?.toString();
+    final lastSubmittedSocketId =
+        gameState?['metadata']?['lastSubmittedSocketId']?.toString();
     final isMyTurn = mySocketId != null && mySocketId == currentTurnSocketId;
     final lastSubmittedDisplayText =
         gameState?['metadata']?['lastSubmittedDisplayText']?.toString() ?? '-';
@@ -1705,6 +2416,12 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
+              ),
+              const SizedBox(height: 10),
+              _ParticipantSeatBoard(
+                players: widget.players,
+                currentTurnSocketId: currentTurnSocketId,
+                lastSubmittedSocketId: lastSubmittedSocketId,
               ),
               const SizedBox(height: 10),
               Expanded(

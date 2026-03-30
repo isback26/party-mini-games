@@ -10,6 +10,7 @@ export class BeondegiGameEngine implements GameEngine {
   readonly gameType = "beondegi" as const;
 
   createInitialState(room: GameRoom): GameState {
+    
     return {
       gameType: this.gameType,
       roomCode: room.code,
