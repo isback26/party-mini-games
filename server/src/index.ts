@@ -59,6 +59,16 @@ type RoomUpdateSettingsEventPayload = {
 const TURN_TIMEOUT_CHECK_INTERVAL_MS = 100;
 const GAME_START_COUNTDOWN_MS = 4000;
 
+function attachServerNow(gameState: GameState): GameState {
+  return {
+    ...gameState,
+    metadata: {
+      ...gameState.metadata,
+      serverNow: Date.now(),
+    },
+  };
+}
+
 function finishGameState(
   gameState: GameState,
   metadataPatch: Record<string, unknown>
@@ -618,6 +628,7 @@ io.on("connection", (socket) => {
         const gameState = attachStartCountdownMetadata(
           engine.createInitialState(orderedRoom)
         );
+        const startedGameState = attachServerNow(gameState);
 
         room.status = "playing";
         roomGameStates.set(roomCode, gameState);
@@ -628,19 +639,18 @@ io.on("connection", (socket) => {
           countdownMs: GAME_START_COUNTDOWN_MS,
           difficulty: room.settings.difficulty,
           turnTimeLimitMs: room.settings.turnTimeLimitMs,
-          gameState,
+          gameState: startedGameState,
         });
 
-        io.to(roomCode).emit("room:update", room);
-        io.to(roomCode).emit("game:state", gameState);
         io.to(roomCode).emit("game:started", {
           roomCode: room.code,
           gameType: room.selectedGame,
           countdownMs: GAME_START_COUNTDOWN_MS,
           difficulty: room.settings.difficulty,
           turnTimeLimitMs: room.settings.turnTimeLimitMs,
-          gameState,
+          gameState: startedGameState,
         });
+        io.to(roomCode).emit("room:update", room);
       } catch (error) {
         callback({ ok: false, message: "게임 시작 중 오류가 발생했습니다." });
       }
@@ -712,31 +722,34 @@ io.on("connection", (socket) => {
 
         if (submitResult.isFinished) {
           room.status = "waiting";
+          const finishedGameState = attachServerNow(submitResult.gameState);
 
           callback({
             ok: true,
             correct: false,
-            gameState: submitResult.gameState,
+            gameState: finishedGameState,
           });
 
           io.to(roomCode).emit("room:update", room);
-          io.to(roomCode).emit("game:state", submitResult.gameState);
+          io.to(roomCode).emit("game:state", finishedGameState);
           io.to(roomCode).emit("game:over", {
             roomCode,
             gameType: room.selectedGame,
-            gameState: submitResult.gameState,
+            gameState: finishedGameState,
             message: submitResult.message,
           });
           return;
         }
 
+        const updatedGameState = attachServerNow(submitResult.gameState);
+
         callback({
           ok: true,
           correct: true,
-          gameState: submitResult.gameState,
+          gameState: updatedGameState,
         });
 
-        io.to(roomCode).emit("game:state", submitResult.gameState);
+        io.to(roomCode).emit("game:state", updatedGameState);
       } catch (error) {
         callback({ ok: false, message: "입력 처리 중 오류가 발생했습니다." });
       }
@@ -771,7 +784,7 @@ io.on("connection", (socket) => {
               turnDeadlineAt: null,
             };
             roomGameStates.set(roomCode, stoppedState);
-            io.to(roomCode).emit("game:state", stoppedState);
+            io.to(roomCode).emit("game:state", attachServerNow(stoppedState));
           } else if (gameState?.currentTurnSocketId === socket.id) {
             const reassignedState = resetTurnTimer(
               {
@@ -781,7 +794,7 @@ io.on("connection", (socket) => {
               room.settings.turnTimeLimitMs
             );
             roomGameStates.set(roomCode, reassignedState);
-            io.to(roomCode).emit("game:state", reassignedState);
+            io.to(roomCode).emit("game:state", attachServerNow(reassignedState));
           }
           io.to(roomCode).emit("room:update", room);
         }
@@ -825,7 +838,7 @@ setInterval(() => {
           };
         }
         roomGameStates.set(roomCode, playingState);
-        io.to(roomCode).emit("game:state", playingState);
+        io.to(roomCode).emit("game:state", attachServerNow(playingState));
       }
       continue;
     }
@@ -843,17 +856,18 @@ setInterval(() => {
           if (finalized.isFinished) {
             room.status = "waiting";
             roomGameStates.set(roomCode, finalized.gameState);
+            const finalizedGameState = attachServerNow(finalized.gameState)
             io.to(roomCode).emit("room:update", room);
-            io.to(roomCode).emit("game:state", finalized.gameState);
+            io.to(roomCode).emit("game:state", finalizedGameState);
             io.to(roomCode).emit("game:over", {
               roomCode,
               gameType: room.selectedGame,
-              gameState: finalized.gameState,
+              gameState: finalizedGameState,
               message: finalized.message,
             });
           } else {
             roomGameStates.set(roomCode, finalized.gameState);
-            io.to(roomCode).emit("game:state", finalized.gameState);
+            io.to(roomCode).emit("game:state", attachServerNow(finalized.gameState));
           }
         }
         continue;
@@ -903,13 +917,14 @@ setInterval(() => {
 
       room.status = "waiting";
       roomGameStates.set(roomCode, finishedState);
+      const timeoutFinishedState = attachServerNow(finishedState);
 
       io.to(roomCode).emit("room:update", room);
-      io.to(roomCode).emit("game:state", finishedState);
+      io.to(roomCode).emit("game:state", timeoutFinishedState);
       io.to(roomCode).emit("game:over", {
         roomCode,
         gameType: room.selectedGame,
-        gameState: finishedState,
+        gameState: timeoutFinishedState,
         message,
       });
       continue;
@@ -928,13 +943,14 @@ setInterval(() => {
 
     room.status = "waiting";
     roomGameStates.set(roomCode, finishedState);
+    const timeoutFinishedState = attachServerNow(finishedState);
 
     io.to(roomCode).emit("room:update", room);
-    io.to(roomCode).emit("game:state", finishedState);
+    io.to(roomCode).emit("game:state", timeoutFinishedState);
     io.to(roomCode).emit("game:over", {
       roomCode,
       gameType: room.selectedGame,
-      gameState: finishedState,
+      gameState: timeoutFinishedState,
       message: `${timeoutLoserNickname}님이 제한시간을 초과했습니다.`,
     });
   }

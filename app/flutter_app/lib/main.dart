@@ -2,9 +2,24 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'services/socket_service.dart';
 import 'services/audio_service.dart';
+import 'widgets/game/participant_seat_board.dart';
+import 'widgets/game/game_status_panel.dart';
+import 'widgets/game/game_screen_shell.dart';
+import 'widgets/game/reaction_bar.dart';
 
 void main() {
   runApp(const PartyMiniGamesApp());
+}
+
+int _extractServerNowMs(dynamic gameState) {
+  final serverNow = gameState?['metadata']?['serverNow'];
+  if (serverNow is int) {
+    return serverNow;
+  }
+  if (serverNow is num) {
+    return serverNow.toInt();
+  }
+  return 0;
 }
 
 class PartyMiniGamesApp extends StatelessWidget {
@@ -930,112 +945,6 @@ class NunchiGameScreen extends StatefulWidget {
   State<NunchiGameScreen> createState() => _NunchiGameScreenState();
 }
 
-class _ParticipantSeatBoard extends StatelessWidget {
-  final List<dynamic> players;
-  final String? currentTurnSocketId;
-  final String? lastSubmittedSocketId;
-  final List<dynamic>? aliveSocketIds;
-  final bool showAliveState;
-
-  const _ParticipantSeatBoard({
-    required this.players,
-    required this.currentTurnSocketId,
-    required this.lastSubmittedSocketId,
-    this.aliveSocketIds,
-    this.showAliveState = false,
-  });
-
-  bool _isAlive(String? socketId) {
-    if (!showAliveState || socketId == null) {
-      return true;
-    }
-    return aliveSocketIds?.contains(socketId) ?? false;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.blue.shade50,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: List.generate(players.length, (index) {
-          final player = players[index];
-          final socketId = player['socketId']?.toString();
-          final nickname = player['nickname']?.toString() ?? '이름 없음';
-          final isCurrent =
-              currentTurnSocketId != null && socketId == currentTurnSocketId;
-          final isLast =
-              lastSubmittedSocketId != null &&
-              socketId == lastSubmittedSocketId;
-          final isAlive = _isAlive(socketId);
-
-          Color backgroundColor = Colors.white;
-          Color borderColor = Colors.grey.shade300;
-
-          if (isLast) {
-            backgroundColor = Colors.amber.shade100;
-            borderColor = Colors.orange.shade400;
-          } else if (isCurrent) {
-            backgroundColor = Colors.green.shade100;
-            borderColor = Colors.green.shade400;
-          } else if (!isAlive) {
-            backgroundColor = Colors.grey.shade300;
-            borderColor = Colors.grey.shade500;
-          }
-
-          String statusLabel = '${index + 1}번';
-          if (isLast) {
-            statusLabel = '방금 입력';
-          } else if (isCurrent) {
-            statusLabel = '현재 차례';
-          } else if (showAliveState) {
-            statusLabel = isAlive ? '생존' : '탈출/탈락';
-          }
-
-          return Container(
-            width: 108,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            decoration: BoxDecoration(
-              color: backgroundColor,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: borderColor, width: 1.5),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  statusLabel,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  nickname,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-          );
-        }),
-      ),
-    );
-  }
-}
-
 class _NunchiGameScreenState extends State<NunchiGameScreen> {
   dynamic gameState;
   String _typedNumber = '';
@@ -1046,11 +955,23 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
   int _remainingTurnMs = 0;
   int _countdownRemainingMs = 0;
   bool _isGameOverDialogOpen = false;
+  int _serverClockOffsetMs = 0;
+
+  void _updateServerClockOffset(dynamic nextGameState) {
+    final serverNowMs = _extractServerNowMs(nextGameState);
+    if (serverNowMs <= 0) return;
+    _serverClockOffsetMs = serverNowMs - DateTime.now().millisecondsSinceEpoch;
+  }
+
+  int _syncedNowMs() {
+    return DateTime.now().millisecondsSinceEpoch + _serverClockOffsetMs;
+  }
 
   @override
   void initState() {
     super.initState();
     gameState = widget.initialGameState;
+    _updateServerClockOffset(gameState);
     _syncTurnTimer(gameState);
 
     widget.socketService.off('game:state');
@@ -1078,7 +999,7 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
 
     if (phase == 'waiting_start' && countdownEndsAt != null) {
       void updateCountdown() {
-        final now = DateTime.now().millisecondsSinceEpoch;
+        final now = _syncedNowMs();
         final remainingMs = (countdownEndsAt - now).clamp(0, 4000);
 
         if (!mounted) return;
@@ -1107,7 +1028,7 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
     }
 
     void updateTick() {
-      final now = DateTime.now().millisecondsSinceEpoch;
+      final now = _syncedNowMs();
       final totalMs = (turnDeadlineAt - turnStartedAt).clamp(1, 1 << 30);
       final remainingMs = (turnDeadlineAt - now).clamp(0, totalMs);
       final progress = remainingMs / totalMs;
@@ -1136,6 +1057,7 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
       AudioService.playTurnStart();
     }
 
+    _updateServerClockOffset(data);
     _syncTurnTimer(data);
     setState(() {
       gameState = data;
@@ -1198,6 +1120,147 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
     return '${seconds.toStringAsFixed(1)}초';
   }
 
+  String _topRightDisplayText(String phase, String lastSubmittedDisplayText) {
+    if (phase == 'waiting_start') {
+      return _countdownLabel();
+    }
+    if (lastSubmittedDisplayText == '-') {
+      return '없음';
+    }
+    return lastSubmittedDisplayText;
+  }
+
+  Color _topRightDisplayColor(String phase, String lastSubmittedDisplayText) {
+    if (phase == 'waiting_start') {
+      final countdownText = _countdownLabel();
+      if (countdownText == '시작') {
+        return Colors.green;
+      }
+      return Colors.red;
+    }
+    if (lastSubmittedDisplayText == '-') {
+      return Colors.grey.shade600;
+    }
+    return Colors.black;
+  }
+
+  Widget _buildTopGamePanel({
+    required String phase,
+    required int expectedNumber,
+    required int targetNumber,
+    required String lastSubmittedDisplayText,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  phase == 'waiting_start'
+                      ? '곧 시작됩니다'
+                      : '현재 숫자: $expectedNumber / 목표 숫자: $targetNumber',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  phase == 'waiting_start'
+                      ? '카운트다운 후 아무나 먼저 1을 누르세요.'
+                      : '숫자를 잘못 누르면 즉시 실패합니다.',
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  phase == 'waiting_start'
+                      ? '카운트다운: ${_countdownLabel()}'
+                      : '남은 시간: ${_formatRemainingTurnTime(_remainingTurnMs)}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: phase == 'playing' ? _turnTimeProgress : 0,
+                    minHeight: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            alignment: Alignment.center,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                _topRightDisplayText(phase, lastSubmittedDisplayText),
+                style: TextStyle(
+                  color: _topRightDisplayColor(phase, lastSubmittedDisplayText),
+                  fontSize: 34,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showReactionPreview(String reactionLabel) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(milliseconds: 700),
+        content: Text('$reactionLabel 리액션'),
+      ),
+    );
+  }
+
+  void _onReactionTapLaugh() {
+    _showReactionPreview('ㅋㅋ');
+  }
+
+  void _onReactionTapWow() {
+    _showReactionPreview('와!');
+  }
+
+  void _onReactionTapClap() {
+    _showReactionPreview('👏');
+  }
+
+  void _onReactionTapFire() {
+    _showReactionPreview('🔥');
+  }
+
+  void _onReactionTapClose() {
+    _showReactionPreview('아깝다!');
+  }
+
+  void _onReactionTapNear() {
+    _showReactionPreview('😱');
+  }
+
   String _nicknameFromSocketId(String? socketId) {
     if (socketId == null) return '알 수 없음';
 
@@ -1207,85 +1270,6 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
       }
     }
     return '알 수 없음';
-  }
-
-  Widget _buildLastActionHighlightPanel({
-    required String phase,
-    required String lastSubmittedDisplayText,
-    required String? lastSubmittedSocketId,
-  }) {
-    final hasLastInput =
-        phase != 'waiting_start' &&
-        lastSubmittedSocketId != null &&
-        lastSubmittedDisplayText != '-';
-
-    final nickname = _nicknameFromSocketId(lastSubmittedSocketId);
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      decoration: BoxDecoration(
-        color: hasLastInput ? Colors.amber.shade50 : Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: hasLastInput ? Colors.orange.shade300 : Colors.grey.shade300,
-          width: hasLastInput ? 1.6 : 1.0,
-        ),
-        boxShadow: hasLastInput
-            ? [
-                BoxShadow(
-                  color: Colors.orange.withValues(alpha: 0.12),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ]
-            : null,
-      ),
-      child: hasLastInput
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.shade200,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: const Text(
-                        '방금 입력',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '$nickname  →  $lastSubmittedDisplayText',
-                    style: const TextStyle(
-                      fontSize: 30,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            )
-          : const Text(
-              '아직 입력된 숫자가 없습니다.',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-            ),
-    );
   }
 
   Future<void> _submitTypedNumber(int value) async {
@@ -1383,6 +1367,12 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
     required bool canUseNumberPad,
     required bool isCountdownLocked,
     required String typedNumberText,
+    required VoidCallback onReactionTapLaugh,
+    required VoidCallback onReactionTapWow,
+    required VoidCallback onReactionTapClap,
+    required VoidCallback onReactionTapFire,
+    required VoidCallback onReactionTapClose,
+    required VoidCallback onReactionTapNear,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1405,60 +1395,82 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
                       : Colors.grey.shade300,
                 ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    height: 48,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: BoxDecoration(
-                      color: isCountdownLocked
-                          ? Colors.grey.shade50
-                          : Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey.shade400),
-                    ),
-                    child: Text(
-                      isCountdownLocked ? '시작 준비 중' : typedNumberText,
-                      style: TextStyle(
-                        fontSize: _typedNumber.length >= 6 ? 20 : 24,
-                        fontWeight: FontWeight.bold,
-                        color: isCountdownLocked
-                            ? Colors.grey.shade500
-                            : _typedNumber.isEmpty
-                            ? Colors.grey.shade500
-                            : Colors.black,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    physics: const ClampingScrollPhysics(),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: constraints.maxHeight,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            height: 48,
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            decoration: BoxDecoration(
+                              color: isCountdownLocked
+                                  ? Colors.grey.shade50
+                                  : Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey.shade400),
+                            ),
+                            child: Text(
+                              isCountdownLocked ? '시작 준비 중' : typedNumberText,
+                              style: TextStyle(
+                                fontSize: _typedNumber.length >= 6 ? 20 : 24,
+                                fontWeight: FontWeight.bold,
+                                color: isCountdownLocked
+                                    ? Colors.grey.shade500
+                                    : _typedNumber.isEmpty
+                                    ? Colors.grey.shade500
+                                    : Colors.black,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            height: 120,
+                            child: GridView.count(
+                              crossAxisCount: 5,
+                              physics: const NeverScrollableScrollPhysics(),
+                              mainAxisSpacing: 8,
+                              crossAxisSpacing: 8,
+                              childAspectRatio: 1.65,
+                              children: [
+                                _buildNumberPadKey('1', canUseNumberPad),
+                                _buildNumberPadKey('2', canUseNumberPad),
+                                _buildNumberPadKey('3', canUseNumberPad),
+                                _buildNumberPadKey('4', canUseNumberPad),
+                                _buildNumberPadKey('5', canUseNumberPad),
+                                _buildNumberPadKey('6', canUseNumberPad),
+                                _buildNumberPadKey('7', canUseNumberPad),
+                                _buildNumberPadKey('8', canUseNumberPad),
+                                _buildNumberPadKey('9', canUseNumberPad),
+                                _buildNumberPadKey('0', canUseNumberPad),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    height: 130,
-                    child: GridView.count(
-                      crossAxisCount: 5,
-                      physics: const NeverScrollableScrollPhysics(),
-                      mainAxisSpacing: 8,
-                      crossAxisSpacing: 8,
-                      childAspectRatio: 1.65,
-                      children: [
-                        _buildNumberPadKey('1', canUseNumberPad),
-                        _buildNumberPadKey('2', canUseNumberPad),
-                        _buildNumberPadKey('3', canUseNumberPad),
-                        _buildNumberPadKey('4', canUseNumberPad),
-                        _buildNumberPadKey('5', canUseNumberPad),
-                        _buildNumberPadKey('6', canUseNumberPad),
-                        _buildNumberPadKey('7', canUseNumberPad),
-                        _buildNumberPadKey('8', canUseNumberPad),
-                        _buildNumberPadKey('9', canUseNumberPad),
-                        _buildNumberPadKey('0', canUseNumberPad),
-                      ],
-                    ),
-                  ),
-                ],
+                  );
+                },
               ),
             ),
           ),
+        ),
+        const SizedBox(height: 6),
+        ReactionBar(
+          onTapLaugh: onReactionTapLaugh,
+          onTapWow: onReactionTapWow,
+          onTapClap: onReactionTapClap,
+          onTapFire: onReactionTapFire,
+          onTapClose: onReactionTapClose,
+          onTapNear: onReactionTapNear,
         ),
       ],
     );
@@ -1489,6 +1501,9 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
     final isCountdownLocked = phase == 'waiting_start';
     final canUseNumberPad =
         phase == 'playing' && isAlive && !isPending && !isSubmitting;
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final isCompactHeight = screenHeight < 760;
+    final participantBoardHeight = isCompactHeight ? 96.0 : 124.0;
     final typedNumberText = _typedNumber.isEmpty ? '입력 없음' : _typedNumber;
 
     return Scaffold(
@@ -1500,105 +1515,55 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
       ),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.orange.shade50,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      phase == 'waiting_start'
-                          ? '곧 시작됩니다'
-                          : '현재 숫자: $expectedNumber / 목표 숫자: $targetNumber',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      phase == 'waiting_start'
-                          ? '카운트다운 후 아무나 먼저 1을 누르세요.'
-                          : '숫자를 잘못 누르면 즉시 실패합니다.',
-                    ),
-                    const SizedBox(height: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(999),
-                      child: LinearProgressIndicator(
-                        value: phase == 'playing' ? _turnTimeProgress : 0,
-                        minHeight: 10,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      phase == 'waiting_start'
-                          ? '카운트다운: ${_countdownLabel()}'
-                          : '남은 시간: ${_formatRemainingTurnTime(_remainingTurnMs)}',
-                    ),
+          padding: EdgeInsets.all(isCompactHeight ? 10 : 12),
+          child: GameScreenShell(
+            top: _buildTopGamePanel(
+              phase: phase,
+              expectedNumber: expectedNumber,
+              targetNumber: targetNumber,
+              lastSubmittedDisplayText: lastSubmittedDisplayText,
+            ),
+            center: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GameStatusPanel(
+                  title: '상태 메시지',
+                  detailLines: [
+                    '성공 숫자 기록: ${submittedNumbers.isEmpty ? "-" : submittedNumbers.join(", ")}',
                   ],
+                  message: feedbackMessage,
+                  maxMessageLines: 2,
                 ),
-              ),
-              const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '직전 숫자: $lastSubmittedDisplayText',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 16,
-                      ),
+                SizedBox(height: isCompactHeight ? 6 : 8),
+                SizedBox(
+                  height: participantBoardHeight,
+                  child: SingleChildScrollView(
+                    child: ParticipantSeatBoard(
+                      players: widget.players,
+                      currentTurnSocketId: null,
+                      lastSubmittedSocketId: lastSubmittedSocketId,
+                      aliveSocketIds: aliveSocketIds,
+                      showAliveState: true,
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '성공 숫자 기록: ${submittedNumbers.isEmpty ? "-" : submittedNumbers.join(", ")}',
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      feedbackMessage,
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              _buildLastActionHighlightPanel(
-                phase: phase,
-                lastSubmittedDisplayText: lastSubmittedDisplayText,
-                lastSubmittedSocketId: lastSubmittedSocketId,
-              ),
-              const SizedBox(height: 10),
-              _ParticipantSeatBoard(
-                players: widget.players,
-                currentTurnSocketId: null,
-                lastSubmittedSocketId: lastSubmittedSocketId,
-                aliveSocketIds: aliveSocketIds,
-                showAliveState: true,
-              ),
-              const SizedBox(height: 10),
-              Flexible(
-                child: _buildBottomInputPanel(
-                  canUseNumberPad: canUseNumberPad,
-                  isCountdownLocked: isCountdownLocked,
-                  typedNumberText: typedNumberText,
-                ),
-              ),
-            ],
+              ],
+            ),
+            bottom: _buildBottomInputPanel(
+              canUseNumberPad: canUseNumberPad,
+              isCountdownLocked: isCountdownLocked,
+              typedNumberText: typedNumberText,
+              onReactionTapLaugh: _onReactionTapLaugh,
+              onReactionTapWow: _onReactionTapWow,
+              onReactionTapClap: _onReactionTapClap,
+              onReactionTapFire: _onReactionTapFire,
+              onReactionTapClose: _onReactionTapClose,
+              onReactionTapNear: _onReactionTapNear,
+            ),
+            centerFlex: 0,
+            bottomFlex: 1,
+            gapTopToCenter: 10,
+            gapCenterToBottom: 10,
           ),
         ),
       ),
@@ -1619,11 +1584,23 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   int _remainingTurnMs = 0;
   bool _isGameOverDialogOpen = false;
   int _countdownRemainingMs = 0;
+  int _serverClockOffsetMs = 0;
+
+  void _updateServerClockOffset(dynamic nextGameState) {
+    final serverNowMs = _extractServerNowMs(nextGameState);
+    if (serverNowMs <= 0) return;
+    _serverClockOffsetMs = serverNowMs - DateTime.now().millisecondsSinceEpoch;
+  }
+
+  int _syncedNowMs() {
+    return DateTime.now().millisecondsSinceEpoch + _serverClockOffsetMs;
+  }
 
   @override
   void initState() {
     super.initState();
     gameState = widget.initialGameState;
+    _updateServerClockOffset(gameState);
     _lastTurnSocketId = gameState?['currentTurnSocketId']?.toString();
 
     _syncTurnTimer(gameState);
@@ -1683,7 +1660,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
 
     if (phase == 'waiting_start' && countdownEndsAt != null) {
       void updateCountdown() {
-        final now = DateTime.now().millisecondsSinceEpoch;
+        final now = _syncedNowMs();
         final remainingMs = (countdownEndsAt - now).clamp(0, 4000);
 
         if (!mounted) return;
@@ -1712,7 +1689,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     }
 
     void updateTick() {
-      final now = DateTime.now().millisecondsSinceEpoch;
+      final now = _syncedNowMs();
       final totalMs = (turnDeadlineAt - turnStartedAt).clamp(1, 1 << 30);
       final remainingMs = (turnDeadlineAt - now).clamp(0, totalMs);
       final progress = remainingMs / totalMs;
@@ -1879,8 +1856,8 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
           ),
           const SizedBox(width: 12),
           Container(
-            width: 84,
-            height: 84,
+            width: 72,
+            height: 72,
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(18),
@@ -1913,6 +1890,40 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     return '다음 게임은 $nickname님 부터 시작입니다.';
   }
 
+  void _showReactionPreview(String reactionLabel) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(milliseconds: 700),
+        content: Text('$reactionLabel 리액션'),
+      ),
+    );
+  }
+
+  void _onReactionTapLaugh() {
+    _showReactionPreview('ㅋㅋ');
+  }
+
+  void _onReactionTapWow() {
+    _showReactionPreview('와!');
+  }
+
+  void _onReactionTapClap() {
+    _showReactionPreview('👏');
+  }
+
+  void _onReactionTapFire() {
+    _showReactionPreview('🔥');
+  }
+
+  void _onReactionTapClose() {
+    _showReactionPreview('아깝다!');
+  }
+
+  void _onReactionTapNear() {
+    _showReactionPreview('😱');
+  }
+
   Widget _buildBottomInputPanel({
     required bool canSubmit,
     required bool canSubmitNumber,
@@ -1921,6 +1932,12 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     required bool canUseNumberPad,
     required bool canUseClapButton,
     required String clapButtonLabel,
+    required VoidCallback onReactionTapLaugh,
+    required VoidCallback onReactionTapWow,
+    required VoidCallback onReactionTapClap,
+    required VoidCallback onReactionTapFire,
+    required VoidCallback onReactionTapClose,
+    required VoidCallback onReactionTapNear,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1944,110 +1961,120 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                       : Colors.grey.shade300,
                 ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    height: 48,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: BoxDecoration(
-                      color: isCountdownLocked
-                          ? Colors.grey.shade50
-                          : Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey.shade400),
-                    ),
-                    child: Text(
-                      isCountdownLocked ? '시작 준비 중' : typedNumberText,
-                      style: TextStyle(
-                        fontSize: _typedNumber.length >= 6 ? 20 : 24,
-                        fontWeight: FontWeight.bold,
-                        color: isCountdownLocked
-                            ? Colors.grey.shade500
-                            : _typedNumber.isEmpty
-                            ? Colors.grey.shade500
-                            : Colors.black,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    physics: const ClampingScrollPhysics(),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        minHeight: constraints.maxHeight,
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Column(
-                    children: [
-                      SizedBox(
-                        height: 180,
-                        child: GridView.count(
-                          crossAxisCount: 5,
-                          physics: const NeverScrollableScrollPhysics(),
-                          mainAxisSpacing: 8,
-                          crossAxisSpacing: 8,
-                          childAspectRatio: 1.65,
-                          children: [
-                            _buildNumberPadKey('1', canUseNumberPad),
-                            _buildNumberPadKey('2', canUseNumberPad),
-                            _buildNumberPadKey('3', canUseNumberPad),
-                            _buildNumberPadKey('4', canUseNumberPad),
-                            _buildNumberPadKey('5', canUseNumberPad),
-                            _buildNumberPadKey('6', canUseNumberPad),
-                            _buildNumberPadKey('7', canUseNumberPad),
-                            _buildNumberPadKey('8', canUseNumberPad),
-                            _buildNumberPadKey('9', canUseNumberPad),
-                            _buildNumberPadKey('0', canUseNumberPad),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Expanded(
-                            child: SizedBox(
-                              height: 52,
-                              child: ElevatedButton(
-                                onPressed: canUseClapButton
-                                    ? _handleClapTap
-                                    : null,
-                                child: Text(clapButtonLabel),
+                          Container(
+                            height: 48,
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            decoration: BoxDecoration(
+                              color: isCountdownLocked
+                                  ? Colors.grey.shade50
+                                  : Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.grey.shade400),
+                            ),
+                            child: Text(
+                              isCountdownLocked ? '시작 준비 중' : typedNumberText,
+                              style: TextStyle(
+                                fontSize: _typedNumber.length >= 6 ? 20 : 24,
+                                fontWeight: FontWeight.bold,
+                                color: isCountdownLocked
+                                    ? Colors.grey.shade500
+                                    : _typedNumber.isEmpty
+                                    ? Colors.grey.shade500
+                                    : Colors.black,
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: SizedBox(
-                              height: 52,
-                              child: ElevatedButton(
-                                onPressed: canSubmit ? _submitManse : null,
-                                child: const Text('만세 입력 🙌'),
+                          const SizedBox(height: 8),
+                          Column(
+                            children: [
+                              SizedBox(
+                                height: 132,
+                                child: GridView.count(
+                                  crossAxisCount: 5,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  mainAxisSpacing: 8,
+                                  crossAxisSpacing: 8,
+                                  childAspectRatio: 1.65,
+                                  children: [
+                                    _buildNumberPadKey('1', canUseNumberPad),
+                                    _buildNumberPadKey('2', canUseNumberPad),
+                                    _buildNumberPadKey('3', canUseNumberPad),
+                                    _buildNumberPadKey('4', canUseNumberPad),
+                                    _buildNumberPadKey('5', canUseNumberPad),
+                                    _buildNumberPadKey('6', canUseNumberPad),
+                                    _buildNumberPadKey('7', canUseNumberPad),
+                                    _buildNumberPadKey('8', canUseNumberPad),
+                                    _buildNumberPadKey('9', canUseNumberPad),
+                                    _buildNumberPadKey('0', canUseNumberPad),
+                                  ],
+                                ),
                               ),
-                            ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildNumberPadButton(
+                                      label: clapButtonLabel,
+                                      onTap: canUseClapButton
+                                          ? _handleClapTap
+                                          : null,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: _buildNumberPadButton(
+                                      label: '만세 🙌',
+                                      onTap: canSubmit ? _submitManse : null,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: SizedBox(
+                                      height: 48,
+                                      child: _buildNumberPadButton(
+                                        label: '삭제',
+                                        onTap: canUseNumberPad
+                                            ? _clearTypedNumber
+                                            : null,
+                                        backgroundColor: Colors.grey.shade300,
+                                        foregroundColor: Colors.black87,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildNumberPadButton(
-                              label: '←',
-                              onTap: canUseNumberPad ? _backspaceDigit : null,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildNumberPadButton(
-                              label: '전체삭제',
-                              onTap: canUseNumberPad ? _clearTypedNumber : null,
-                              backgroundColor: Colors.grey.shade300,
-                              foregroundColor: Colors.black87,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ],
+                    ),
+                  );
+                },
               ),
             ),
           ),
+        ),
+        const SizedBox(height: 6),
+        ReactionBar(
+          onTapLaugh: onReactionTapLaugh,
+          onTapWow: onReactionTapWow,
+          onTapClap: onReactionTapClap,
+          onTapFire: onReactionTapFire,
+          onTapClose: onReactionTapClose,
+          onTapNear: onReactionTapNear,
         ),
       ],
     );
@@ -2077,6 +2104,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       AudioService.playTurnStart();
     }
 
+    _updateServerClockOffset(data);
     _syncTurnTimer(data);
     setState(() {
       final lastActionMessage =
@@ -2375,7 +2403,10 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     final canSubmitNumber = canSubmit && _typedNumber.isNotEmpty;
     final canUseNumberPad = canSubmit;
     final canUseClapButton = canSubmit;
-    const clapButtonLabel = '박수 입력 👏';
+    const clapButtonLabel = '박수 👏';
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final isCompactHeight = screenHeight < 760;
+    final participantBoardHeight = isCompactHeight ? 96.0 : 124.0;
     final currentPlayerNickname = _nicknameBySocketId(currentTurnSocketId);
 
     return Scaffold(
@@ -2387,55 +2418,55 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
       ),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            children: [
-              _buildTopGamePanel(
-                isMyTurn: isMyTurn,
-                phase: phase,
-                lastSubmittedDisplayText: lastSubmittedDisplayText,
-                currentPlayerNickname: currentPlayerNickname,
-              ),
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
+          padding: EdgeInsets.all(isCompactHeight ? 10 : 12),
+          child: GameScreenShell(
+            top: _buildTopGamePanel(
+              isMyTurn: isMyTurn,
+              phase: phase,
+              lastSubmittedDisplayText: lastSubmittedDisplayText,
+              currentPlayerNickname: currentPlayerNickname,
+            ),
+            center: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GameStatusPanel(
+                  title: '상태 메시지',
+                  message: feedbackMessage,
+                  maxMessageLines: 2,
+                  compact: true,
                 ),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Text(
-                  feedbackMessage,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                SizedBox(height: isCompactHeight ? 8 : 10),
+                SizedBox(
+                  height: participantBoardHeight,
+                  child: SingleChildScrollView(
+                    child: ParticipantSeatBoard(
+                      players: widget.players,
+                      currentTurnSocketId: currentTurnSocketId,
+                      lastSubmittedSocketId: lastSubmittedSocketId,
+                    ),
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                 ),
-              ),
-              const SizedBox(height: 10),
-              _ParticipantSeatBoard(
-                players: widget.players,
-                currentTurnSocketId: currentTurnSocketId,
-                lastSubmittedSocketId: lastSubmittedSocketId,
-              ),
-              const SizedBox(height: 10),
-              Expanded(
-                child: _buildBottomInputPanel(
-                  canSubmit: canSubmit,
-                  canSubmitNumber: canSubmitNumber,
-                  isCountdownLocked: isCountdownLocked,
-                  typedNumberText: typedNumberText,
-                  canUseNumberPad: canUseNumberPad,
-                  canUseClapButton: canUseClapButton,
-                  clapButtonLabel: clapButtonLabel,
-                ),
-              ),
-            ],
+              ],
+            ),
+            bottom: _buildBottomInputPanel(
+              canSubmit: canSubmit,
+              canSubmitNumber: canSubmitNumber,
+              isCountdownLocked: isCountdownLocked,
+              typedNumberText: typedNumberText,
+              canUseNumberPad: canUseNumberPad,
+              canUseClapButton: canUseClapButton,
+              clapButtonLabel: clapButtonLabel,
+              onReactionTapLaugh: _onReactionTapLaugh,
+              onReactionTapWow: _onReactionTapWow,
+              onReactionTapClap: _onReactionTapClap,
+              onReactionTapFire: _onReactionTapFire,
+              onReactionTapClose: _onReactionTapClose,
+              onReactionTapNear: _onReactionTapNear,
+            ),
+            centerFlex: 0,
+            bottomFlex: 1,
+            gapTopToCenter: 8,
+            gapCenterToBottom: 10,
           ),
         ),
       ),
