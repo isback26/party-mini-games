@@ -2,6 +2,7 @@ import 'dart:developer';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 typedef SocketAckCallback = void Function(dynamic response);
+typedef ReactionEventHandler = void Function(dynamic payload);
 
 class SocketService {
   io.Socket? _socket;
@@ -63,10 +64,6 @@ class SocketService {
     _socket?.off(event);
   }
 
-  void emit(String event, dynamic data) {
-    _socket?.emit(event, data);
-  }
-
   void emitWithAck(
     String event,
     dynamic data,
@@ -97,6 +94,24 @@ class SocketService {
     }
 
     emitWithAck('game:submit', payload, callback);
+  }
+
+  void sendReaction({required String roomCode, required String label}) {
+    final trimmedLabel = label.trim();
+    if (trimmedLabel.isEmpty) return;
+
+    _socket?.emit('reaction:send', {
+      'roomCode': roomCode.trim().toUpperCase(),
+      'label': trimmedLabel,
+    });
+  }
+
+  void onReactionShow(ReactionEventHandler handler) {
+    on('reaction:show', handler);
+  }
+
+  void offReactionShow() {
+    off('reaction:show');
   }
 
   void dispose() {

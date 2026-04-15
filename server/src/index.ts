@@ -4,6 +4,9 @@ import {
   GameState,
   GameRoom,
   GameType,
+  ReactionLabel,
+  ReactionSendPayload,
+  ReactionShowPayload,
   TurnTimeLimitMs,
   ThreeSixNineDifficulty,
   isAllowedTurnTimeLimitMs,
@@ -55,6 +58,15 @@ type RoomUpdateSettingsEventPayload = {
   turnTimeLimitMs?: TurnTimeLimitMs;
   difficulty?: ThreeSixNineDifficulty;
 };
+
+const allowedReactionLabels: readonly ReactionLabel[] = [
+  "ㅋㅋ",
+  "와!",
+  "👏",
+  "🔥",
+  "아깝다!",
+  "😱",
+];
 
 const TURN_TIMEOUT_CHECK_INTERVAL_MS = 100;
 const GAME_START_COUNTDOWN_MS = 4000;
@@ -339,6 +351,43 @@ function buildStartOrderedRoom(room: GameRoom, previousGameState?: GameState): G
 
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id}`);
+
+  socket.on("reaction:send", (payload: ReactionSendPayload) => {
+    try {
+      const roomCode = payload?.roomCode?.trim().toUpperCase();
+      const label = payload?.label;
+
+      if (!roomCode || !label) {
+        return;
+      }
+
+      if (!allowedReactionLabels.includes(label)) {
+        return;
+      }
+
+      const room = rooms.get(roomCode);
+      if (!room) {
+        return;
+      }
+
+      const sender = room.players.find((player) => player.socketId === socket.id);
+      if (!sender) {
+        return;
+      }
+
+      const reactionPayload: ReactionShowPayload = {
+        roomCode,
+        socketId: socket.id,
+        nickname: sender.nickname,
+        label,
+        createdAt: Date.now(),
+      };
+
+      io.to(roomCode).emit("reaction:show", reactionPayload);
+    } catch (error) {
+      console.error("[REACTION SEND ERROR]", error);
+    }
+  });
 
   socket.on("room:create", (payload: RoomCreateEventPayload, callback) => {
     try {

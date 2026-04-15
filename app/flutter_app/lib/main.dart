@@ -945,6 +945,18 @@ class NunchiGameScreen extends StatefulWidget {
   State<NunchiGameScreen> createState() => _NunchiGameScreenState();
 }
 
+class _SeatReactionOverlayItem {
+  final String id;
+  final String socketId;
+  final String label;
+
+  const _SeatReactionOverlayItem({
+    required this.id,
+    required this.socketId,
+    required this.label,
+  });
+}
+
 class _NunchiGameScreenState extends State<NunchiGameScreen> {
   dynamic gameState;
   String _typedNumber = '';
@@ -956,6 +968,7 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
   int _countdownRemainingMs = 0;
   bool _isGameOverDialogOpen = false;
   int _serverClockOffsetMs = 0;
+  final List<_SeatReactionOverlayItem> _seatReactions = [];
 
   void _updateServerClockOffset(dynamic nextGameState) {
     final serverNowMs = _extractServerNowMs(nextGameState);
@@ -976,16 +989,51 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
 
     widget.socketService.off('game:state');
     widget.socketService.off('game:over');
+    widget.socketService.offReactionShow();
     widget.socketService.on('game:state', _handleGameState);
     widget.socketService.on('game:over', _handleGameOver);
+    widget.socketService.onReactionShow(_handleReactionShow);
   }
 
   @override
   void dispose() {
     widget.socketService.off('game:state');
     widget.socketService.off('game:over');
+    widget.socketService.offReactionShow();
     _turnTimer?.cancel();
     super.dispose();
+  }
+
+  void _handleReactionShow(dynamic payload) {
+    if (!mounted) return;
+
+    final roomCode = payload?['roomCode']?.toString();
+    final socketId = payload?['socketId']?.toString();
+    final label = payload?['label']?.toString();
+    final createdAt = payload?['createdAt'];
+
+    if (roomCode != widget.roomCode || socketId == null || label == null) {
+      return;
+    }
+
+    final id =
+        '${createdAt ?? DateTime.now().microsecondsSinceEpoch}_${socketId}_$label';
+    final item = _SeatReactionOverlayItem(
+      id: id,
+      socketId: socketId,
+      label: label,
+    );
+
+    setState(() {
+      _seatReactions.add(item);
+    });
+
+    Future.delayed(const Duration(milliseconds: 1400), () {
+      if (!mounted) return;
+      setState(() {
+        _seatReactions.removeWhere((reaction) => reaction.id == id);
+      });
+    });
   }
 
   void _syncTurnTimer(dynamic nextGameState) {
@@ -1227,49 +1275,35 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
     );
   }
 
-  void _showReactionPreview(String reactionLabel) {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        duration: const Duration(milliseconds: 700),
-        content: Text('$reactionLabel 리액션'),
-      ),
+  void _sendReaction(String reactionLabel) {
+    widget.socketService.sendReaction(
+      roomCode: widget.roomCode,
+      label: reactionLabel,
     );
   }
 
   void _onReactionTapLaugh() {
-    _showReactionPreview('ㅋㅋ');
+    _sendReaction('ㅋㅋ');
   }
 
   void _onReactionTapWow() {
-    _showReactionPreview('와!');
+    _sendReaction('와!');
   }
 
   void _onReactionTapClap() {
-    _showReactionPreview('👏');
+    _sendReaction('👏');
   }
 
   void _onReactionTapFire() {
-    _showReactionPreview('🔥');
+    _sendReaction('🔥');
   }
 
   void _onReactionTapClose() {
-    _showReactionPreview('아깝다!');
+    _sendReaction('아깝다!');
   }
 
   void _onReactionTapNear() {
-    _showReactionPreview('😱');
-  }
-
-  String _nicknameFromSocketId(String? socketId) {
-    if (socketId == null) return '알 수 없음';
-
-    for (final player in widget.players) {
-      if (player['socketId']?.toString() == socketId) {
-        return player['nickname']?.toString() ?? '알 수 없음';
-      }
-    }
-    return '알 수 없음';
+    _sendReaction('😱');
   }
 
   Future<void> _submitTypedNumber(int value) async {
@@ -1544,6 +1578,13 @@ class _NunchiGameScreenState extends State<NunchiGameScreen> {
                       lastSubmittedSocketId: lastSubmittedSocketId,
                       aliveSocketIds: aliveSocketIds,
                       showAliveState: true,
+                      reactions: _seatReactions.map((reaction) {
+                        return SeatReactionEntry(
+                          id: reaction.id,
+                          socketId: reaction.socketId,
+                          label: reaction.label,
+                        );
+                      }).toList(),
                     ),
                   ),
                 ),
@@ -1585,6 +1626,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
   bool _isGameOverDialogOpen = false;
   int _countdownRemainingMs = 0;
   int _serverClockOffsetMs = 0;
+  final List<_SeatReactionOverlayItem> _seatReactions = [];
 
   void _updateServerClockOffset(dynamic nextGameState) {
     final serverNowMs = _extractServerNowMs(nextGameState);
@@ -1637,16 +1679,51 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
 
     widget.socketService.off('game:state');
     widget.socketService.off('game:over');
+    widget.socketService.offReactionShow();
     widget.socketService.on('game:state', _handleGameState);
     widget.socketService.on('game:over', _handleGameOver);
+    widget.socketService.onReactionShow(_handleReactionShow);
   }
 
   @override
   void dispose() {
     widget.socketService.off('game:state');
     widget.socketService.off('game:over');
+    widget.socketService.offReactionShow();
     _turnTimer?.cancel();
     super.dispose();
+  }
+
+  void _handleReactionShow(dynamic payload) {
+    if (!mounted) return;
+
+    final roomCode = payload?['roomCode']?.toString();
+    final socketId = payload?['socketId']?.toString();
+    final label = payload?['label']?.toString();
+    final createdAt = payload?['createdAt'];
+
+    if (roomCode != widget.roomCode || socketId == null || label == null) {
+      return;
+    }
+
+    final id =
+        '${createdAt ?? DateTime.now().microsecondsSinceEpoch}_${socketId}_$label';
+    final item = _SeatReactionOverlayItem(
+      id: id,
+      socketId: socketId,
+      label: label,
+    );
+
+    setState(() {
+      _seatReactions.add(item);
+    });
+
+    Future.delayed(const Duration(milliseconds: 1400), () {
+      if (!mounted) return;
+      setState(() {
+        _seatReactions.removeWhere((reaction) => reaction.id == id);
+      });
+    });
   }
 
   void _syncTurnTimer(dynamic nextGameState) {
@@ -1890,38 +1967,35 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     return '다음 게임은 $nickname님 부터 시작입니다.';
   }
 
-  void _showReactionPreview(String reactionLabel) {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        duration: const Duration(milliseconds: 700),
-        content: Text('$reactionLabel 리액션'),
-      ),
+  void _sendReaction(String reactionLabel) {
+    widget.socketService.sendReaction(
+      roomCode: widget.roomCode,
+      label: reactionLabel,
     );
   }
 
   void _onReactionTapLaugh() {
-    _showReactionPreview('ㅋㅋ');
+    _sendReaction('ㅋㅋ');
   }
 
   void _onReactionTapWow() {
-    _showReactionPreview('와!');
+    _sendReaction('와!');
   }
 
   void _onReactionTapClap() {
-    _showReactionPreview('👏');
+    _sendReaction('👏');
   }
 
   void _onReactionTapFire() {
-    _showReactionPreview('🔥');
+    _sendReaction('🔥');
   }
 
   void _onReactionTapClose() {
-    _showReactionPreview('아깝다!');
+    _sendReaction('아깝다!');
   }
 
   void _onReactionTapNear() {
-    _showReactionPreview('😱');
+    _sendReaction('😱');
   }
 
   Widget _buildBottomInputPanel({
@@ -2036,7 +2110,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: _buildNumberPadButton(
-                                      label: '만세 🙌',
+                                      label: '🙌',
                                       onTap: canSubmit ? _submitManse : null,
                                     ),
                                   ),
@@ -2281,14 +2355,6 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     }
   }
 
-  void _backspaceDigit() {
-    if (isSubmitting || _typedNumber.isEmpty) return;
-
-    setState(() {
-      _typedNumber = _typedNumber.substring(0, _typedNumber.length - 1);
-    });
-  }
-
   void _clearTypedNumber() {
     if (isSubmitting || _typedNumber.isEmpty) return;
 
@@ -2323,7 +2389,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
           foregroundColor: foregroundColor,
           disabledBackgroundColor: Colors.grey.shade300,
           disabledForegroundColor: Colors.grey.shade500,
-          textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          textStyle: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -2403,7 +2469,7 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
     final canSubmitNumber = canSubmit && _typedNumber.isNotEmpty;
     final canUseNumberPad = canSubmit;
     final canUseClapButton = canSubmit;
-    const clapButtonLabel = '박수 👏';
+    const clapButtonLabel = '👏';
     final screenHeight = MediaQuery.sizeOf(context).height;
     final isCompactHeight = screenHeight < 760;
     final participantBoardHeight = isCompactHeight ? 96.0 : 124.0;
@@ -2443,6 +2509,13 @@ class _ThreeSixNineGameScreenState extends State<ThreeSixNineGameScreen> {
                       players: widget.players,
                       currentTurnSocketId: currentTurnSocketId,
                       lastSubmittedSocketId: lastSubmittedSocketId,
+                      reactions: _seatReactions.map((reaction) {
+                        return SeatReactionEntry(
+                          id: reaction.id,
+                          socketId: reaction.socketId,
+                          label: reaction.label,
+                        );
+                      }).toList(),
                     ),
                   ),
                 ),

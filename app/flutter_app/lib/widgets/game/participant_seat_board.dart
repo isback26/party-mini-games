@@ -1,11 +1,24 @@
 import 'package:flutter/material.dart';
 
+class SeatReactionEntry {
+  final String id;
+  final String socketId;
+  final String label;
+
+  const SeatReactionEntry({
+    required this.id,
+    required this.socketId,
+    required this.label,
+  });
+}
+
 class ParticipantSeatBoard extends StatelessWidget {
   final List<dynamic> players;
   final String? currentTurnSocketId;
   final String? lastSubmittedSocketId;
   final List<dynamic>? aliveSocketIds;
   final bool showAliveState;
+  final List<SeatReactionEntry> reactions;
 
   const ParticipantSeatBoard({
     super.key,
@@ -14,6 +27,7 @@ class ParticipantSeatBoard extends StatelessWidget {
     required this.lastSubmittedSocketId,
     this.aliveSocketIds,
     this.showAliveState = false,
+    this.reactions = const [],
   });
 
   bool _isAlive(String? socketId) {
@@ -45,6 +59,9 @@ class ParticipantSeatBoard extends StatelessWidget {
               lastSubmittedSocketId != null &&
               socketId == lastSubmittedSocketId;
           final isAlive = _isAlive(socketId);
+          final seatReactions = reactions
+              .where((reaction) => reaction.socketId == socketId)
+              .toList();
 
           Color backgroundColor = Colors.white;
           Color borderColor = Colors.grey.shade300;
@@ -69,39 +86,127 @@ class ParticipantSeatBoard extends StatelessWidget {
             statusLabel = isAlive ? '생존' : '탈출/탈락';
           }
 
-          return Container(
-            width: 108,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-            decoration: BoxDecoration(
-              color: backgroundColor,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: borderColor, width: 1.5),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  statusLabel,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 108,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: backgroundColor,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: borderColor, width: 1.5),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      statusLabel,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      nickname,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (seatReactions.isNotEmpty)
+                Positioned(
+                  top: -34,
+                  left: 0,
+                  right: 0,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: SizedBox(
+                        width: 92,
+                        height: 54,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          alignment: Alignment.topCenter,
+                          children: List.generate(
+                            seatReactions.length > 3 ? 3 : seatReactions.length,
+                            (reactionIndex) {
+                              final reaction = seatReactions[reactionIndex];
+                              final dx = reactionIndex == 0
+                                  ? 0.0
+                                  : (reactionIndex.isOdd ? -16.0 : 16.0);
+                              final dy = reactionIndex * 10.0;
+
+                              return Transform.translate(
+                                offset: Offset(dx, dy),
+                                child: _SeatReactionBadge(
+                                  key: ValueKey(reaction.id),
+                                  label: reaction.label,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  nickname,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
+            ],
           );
         }),
+      ),
+    );
+  }
+}
+
+class _SeatReactionBadge extends StatelessWidget {
+  final String label;
+
+  const _SeatReactionBadge({super.key, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.82, end: 1.0),
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutBack,
+      builder: (context, scale, child) {
+        return TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.0, end: 1.0),
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          builder: (context, opacity, child) {
+            return Opacity(
+              opacity: opacity,
+              child: Transform.scale(scale: scale, child: child),
+            );
+          },
+          child: child,
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.82),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ),
     );
   }

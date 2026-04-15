@@ -68,6 +68,14 @@ export type GameState<TMetadata extends Record<string, unknown> = Record<string,
 
 export type GameSubmitInputMode = "touch" | "voice";
 
+export type ReactionLabel =
+  | "ㅋㅋ"
+  | "와!"
+  | "👏"
+  | "🔥"
+  | "아깝다!"
+  | "😱";
+
 export type GameSubmitPayload = {
   playerSocketId: string;
   moveType: string;
@@ -75,6 +83,19 @@ export type GameSubmitPayload = {
   text?: string;
   inputMode?: GameSubmitInputMode;
   recognizedText?: string;
+};
+
+export type ReactionSendPayload = {
+  roomCode: string;
+  label: ReactionLabel;
+};
+
+export type ReactionShowPayload = {
+  roomCode: string;
+  socketId: string;
+  nickname: string;
+  label: ReactionLabel;
+  createdAt: number;
 };
 
 export type GameSubmitResult = {
